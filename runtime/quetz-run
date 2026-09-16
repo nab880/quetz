@@ -9,6 +9,7 @@ else
     ROOT="${QUETZ_ASSETS:-/opt/sst/share/quetz}"
 fi
 DECK="${ROOT}/tests/sysmode/basic_quetz_system_demo.py"
+CUSTOM_DECK=0
 FIRMWARE=""
 OUT=artifacts
 LIMIT=60
@@ -20,7 +21,7 @@ fail() { echo "quetz-run: $*" >&2; exit 1; }
 value() { [ "$#" -ge 2 ] && [ -n "$2" ] && [[ "$2" != --* ]] || fail "$1 needs a value"; }
 while [ "$#" -gt 0 ]; do
     case "$1" in
-        --deck) value "$@"; DECK="$2"; shift 2 ;;
+        --deck) value "$@"; DECK="$2"; CUSTOM_DECK=1; shift 2 ;;
         --firmware) value "$@"; FIRMWARE="$2"; shift 2 ;;
         --env) value "$@"; [[ "$2" =~ ^[a-zA-Z_][a-zA-Z_0-9]*= ]] || fail 'invalid environment assignment'; EXTRA_ENV+=("$2"); shift 2 ;;
         --out) value "$@"; OUT="$2"; shift 2 ;;
@@ -43,7 +44,12 @@ mkdir -p "${OUT}"
 OUT="$(cd "${OUT}" && pwd)"
 if [ "${NO_DOCKER}" = 0 ] && [ ! -f /.dockerenv ]; then
     ARGS=(--no-docker --deck "/deck/$(basename "${DECK}")" --out /out --timeout "${LIMIT}")
-    MOUNTS=(-v "$(dirname "${DECK}"):/deck:ro" -v "${OUT}:/out")
+    MOUNTS=(-v "${OUT}:/out")
+    if [ "${CUSTOM_DECK}" = 1 ]; then
+        MOUNTS+=(-v "$(dirname "${DECK}"):/deck:ro")
+    else
+        ARGS=(--no-docker --out /out --timeout "${LIMIT}")
+    fi
     if [ -n "${FIRMWARE}" ]; then
         MOUNTS+=(-v "${FIRMWARE}:/firmware.elf:ro")
         ARGS+=(--firmware /firmware.elf)

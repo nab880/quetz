@@ -83,6 +83,7 @@ if gpu_irq_line or sensor_irq_line:
     # The launcher reads this at QEMU spawn time (same process): enable the
     # bridge's reverse-mailbox poll for all 64 mcf_intc inputs.
     os.environ.setdefault("QUETZ_IRQ_LINES", "64")
+    os.environ.setdefault("QUETZ_IRQ_INTC_TYPE", "mcf-intc")
 ram_start  = _parse_addr(os.environ.get("QUETZ_RAM_START", "0x40000000"))
 ram_end    = _parse_addr(os.environ.get("QUETZ_RAM_END", "0x47FFFFFF"))
 uart_addr  = _parse_addr(os.environ.get("QUETZ_UART_ADDR", "0xfc060000"))
