@@ -43,4 +43,3 @@ TEST_CASE("unsupported machine CPU accelerator and topology cannot override cont
         CHECK(multicoreLaunchError(2, true, args) != nullptr);
     }
 }
-

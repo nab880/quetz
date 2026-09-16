@@ -56,7 +56,7 @@ CMD ["quetz-run", "--no-docker"]
 
 FROM ubuntu:24.04@sha256:4fbb8e6a8395de5a7550b33509421a2bafbc0aab6c06ba2cef9ebffbc7092d90 AS runtime
 ARG QUETZ_REVISION=unknown
-LABEL org.quetz.revision="${QUETZ_REVISION}" org.quetz.ipc.magic="0x515A4D04"
+LABEL org.quetz.revision="${QUETZ_REVISION}" org.quetz.ipc.magic="0x515A4D05"
 ENV DEBIAN_FRONTEND=noninteractive SST_PREFIX=/opt/sst QEMU_PREFIX=/opt/qemu
 ENV PATH=/opt/sst/bin:/opt/qemu/bin:${PATH}
 ENV LD_LIBRARY_PATH=/opt/sst/lib

@@ -8,7 +8,7 @@
 #ifndef _QUETZ_DECODER_RISCV_H
 #define _QUETZ_DECODER_RISCV_H
 
-#include "../quetz_shmem.h"
+#include "../quetz_ipc_types.h"
 
 namespace SST {
 namespace Quetz {
