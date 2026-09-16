@@ -1,0 +1,7 @@
+#!/bin/sh
+set -eu
+prefix="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
+register="${SST_REGISTER:-@SST_ROOT@/bin/sst-register}"
+"$register" quetz "ELEMENT_LIBDIR=$prefix/lib/sst-elements-library"
+"$register" SST_ELEMENT_SOURCE "quetz=$prefix/include/sst/elements/quetz"
+"$register" SST_ELEMENT_TESTS "quetz=$prefix/share/quetz/tests"

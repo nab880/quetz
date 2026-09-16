@@ -3,7 +3,7 @@
 
 #include <string>
 
-#include "../../quetz_config_manager.h"
+#include "../../src/quetz_config_manager.h"
 
 namespace SST {
 namespace Quetz {

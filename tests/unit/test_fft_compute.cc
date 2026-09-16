@@ -7,7 +7,7 @@
 #include <cstring>
 #include <vector>
 
-#include "../../quetz_fft.h"
+#include "../../src/quetz_fft.h"
 
 using SST::Quetz::QuetzCf;
 using SST::Quetz::quetz_fft_radix2;
@@ -49,7 +49,7 @@ float f32_from_bits(uint32_t bits) {
     return value;
 }
 
-std::vector<QuetzCf> raptor_reference_input() {
+std::vector<QuetzCf> firmware_reference_input() {
     const float s = f32_from_bits(0x3f3504f3u); // binary32 sqrt(1/2)
     const QuetzCf phases[] = {
         { 1.0f,  0.0f}, { s,  s}, { 0.0f,  1.0f}, {-s,  s},
@@ -61,7 +61,7 @@ std::vector<QuetzCf> raptor_reference_input() {
     return input;
 }
 
-bool raptor_reference_output_matches(const std::vector<QuetzCf>& output) {
+bool firmware_reference_output_matches(const std::vector<QuetzCf>& output) {
     for (uint32_t k = 0; k < output.size(); k++) {
         const float expected_real = k == output.size() / 8u ? 256.0f : 0.0f;
         if (std::fabs(output[k].re - expected_real) > 0.001f ||
@@ -149,7 +149,7 @@ TEST_CASE("impulse -> all ones (bit-exact; matches the firmware check)") {
 
 TEST_CASE("Raptor reference eighth-rate complex tone selects forward bin") {
     const uint32_t N = 256;
-    std::vector<QuetzCf> a = raptor_reference_input();
+    std::vector<QuetzCf> a = firmware_reference_input();
     quetz_fft_radix2(a.data(), N);
 
     uint32_t checksum = 2166136261u;
@@ -187,12 +187,12 @@ TEST_CASE("Raptor reference checksum encodes peak-bin placement") {
 }
 
 TEST_CASE("Raptor reference rejects zeroed non-quadrant twiddles") {
-    std::vector<QuetzCf> a = raptor_reference_input();
+    std::vector<QuetzCf> a = firmware_reference_input();
     uint32_t active_mutations =
         fft_with_non_quadrant_twiddles_zeroed(a.data(), (uint32_t)a.size());
 
     CHECK(active_mutations > 0u);
-    CHECK_FALSE(raptor_reference_output_matches(a));
+    CHECK_FALSE(firmware_reference_output_matches(a));
 }
 
 TEST_CASE("DC -> N at bin 0, zero elsewhere") {

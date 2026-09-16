@@ -9,9 +9,8 @@
  * QEMU_CLOCK_VIRTUAL timer drains the shared-memory IRQ slots (see
  * quetz_ipc_client.h) and forwards each level change to interrupt-controller
  * input `line` via qdev_get_gpio_in(). The controller is resolved by QOM
- * type (default "mcf-intc", whose 64 inputs the overlay exposes as qdev
- * GPIOs); other machines can name a controller type through the intc-type
- * property, provided that device registers qdev GPIO inputs.
+ * type supplied explicitly through intc-type; the controller must register
+ * qdev GPIO inputs.
  */
 
 #include "qemu/osdep.h"
@@ -125,10 +124,14 @@ static void sst_mmio_bridge_irq_poll(void *opaque)
 
 static void sst_mmio_bridge_irq_init(SstMmioBridgeState *s, Error **errp)
 {
-    const char *intc_type =
-        (s->intc_type && s->intc_type[0]) ? s->intc_type : "mcf-intc";
+    const char *intc_type = s->intc_type;
     Object *intc;
     bool ambiguous = false;
+
+    if (!intc_type || !intc_type[0]) {
+        error_setg(errp, "sst-mmio-bridge: IRQ routing requires explicit intc-type");
+        return;
+    }
 
     if (s->irq_count > QUETZ_MAX_IRQ_LINES) {
         error_setg(errp, "sst-mmio-bridge: irq-count %u exceeds the shared "

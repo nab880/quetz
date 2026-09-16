@@ -6,7 +6,7 @@
 
 #include <cstdint>
 
-#include "../../quetz_scale_offset.h"
+#include "../../src/quetz_scale_offset.h"
 
 using SST::Quetz::quetz_scale_offset_sat16;
 

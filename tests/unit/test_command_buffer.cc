@@ -4,7 +4,7 @@
 #include <cstring>
 #include <vector>
 
-#include "../../quetz_ipc_types.h"
+#include "../../src/quetz_ipc_types.h"
 
 using SST::Quetz::QuetzCommand;
 using SST::Quetz::QuetzShmemCmd;

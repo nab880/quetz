@@ -122,8 +122,7 @@ static int map_shmem(const char *shmname, QuetzIpcClient *c)
         c->fd = -1;
         return -1;
     }
-    uint8_t *ram = quetz_local_ram(c->shared, 0);
-    if (!ram || ((uintptr_t)ram & 4095u)) {
+    if (!quetz_native_regions_valid(c->shared)) {
         fprintf(stderr, "quetz-ipc: invalid shared RAM offset/alignment\n");
         munmap(c->map, c->map_size);
         c->map = NULL;
@@ -158,10 +157,30 @@ unsigned quetz_ipc_vcpu_count(QuetzIpcClient *client)
     return client && client->shared ? client->shared->numCores : 0;
 }
 
-uint8_t *quetz_ipc_local_ram(QuetzIpcClient *client, unsigned bank)
+unsigned quetz_ipc_native_region_count(QuetzIpcClient *client)
 {
-    return client && client->shared && bank < 2
-        ? quetz_local_ram(client->shared, bank) : NULL;
+    return client && client->shared ? client->shared->native_region_count : 0;
+}
+
+int quetz_ipc_native_region(QuetzIpcClient *client, unsigned index,
+                            uint32_t *base, uint32_t *size)
+{
+    if (!client || index >= client->shared->native_region_count || !base || !size) return 0;
+    const QuetzNativeRamRegion *region = &client->shared->native_regions[index];
+    *base = region->base;
+    *size = region->size;
+    return 1;
+}
+
+uint8_t *quetz_ipc_native_ram(QuetzIpcClient *client, uint32_t base, uint32_t size)
+{
+    if (!client || !client->shared) return NULL;
+    for (unsigned i = 0; i < client->shared->native_region_count; ++i) {
+        const QuetzNativeRamRegion *region = &client->shared->native_regions[i];
+        if (region->base == base && region->size == size)
+            return quetz_native_ram(client->shared, i);
+    }
+    return NULL;
 }
 
 void quetz_ipc_detach(QuetzIpcClient *client)

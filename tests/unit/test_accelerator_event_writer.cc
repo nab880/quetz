@@ -4,7 +4,7 @@
 #include <fstream>
 #include <sstream>
 
-#include "../../quetz_accelerator_event_writer.h"
+#include "../../src/quetz_accelerator_event_writer.h"
 
 using SST::Quetz::AcceleratorEventWriter;
 

@@ -1,6 +1,6 @@
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include "doctest.h"
-#include "../../qemu_plugin/coldfire_cache_ops.h"
+#include "../../src/qemu_plugin/coldfire_cache_ops.h"
 using SST::Quetz::decodeColdFireCacheOp;
 
 TEST_CASE("MOVEC decodes big-endian bytes and each D/A source") {

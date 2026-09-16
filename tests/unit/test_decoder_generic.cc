@@ -1,7 +1,7 @@
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include "doctest.h"
 
-#include "../../qemu_plugin/decoder_generic.h"
+#include "../../src/qemu_plugin/decoder_generic.h"
 
 using SST::Quetz::classify_by_size;
 using SST::Quetz::QUETZ_INSN_INT_MEM;

@@ -123,21 +123,6 @@ echo "=== ColdFire V4 smoke: FPU + ISA_B + EMAC (m68k, -cpu cfv4e) ==="
 $M68K_CC $M68K_V4_FLAGS coldfire_startup.S coldfire_v4_fpu.c -o coldfire_v4_fpu
 echo "  -> coldfire_v4_fpu"
 
-echo "=== ColdFire mcf5208evb BSP-survival probe catalogue (m68k) ==="
-$M68K_CC $M68K_FLAGS coldfire_startup.S bsp_torture.c -o bsp_torture
-echo "  -> bsp_torture"
-
-echo "=== ColdFire Raptor GPIO device test (m68k) ==="
-$M68K_CC $M68K_FLAGS coldfire_startup.S coldfire_gpio.c -o coldfire_gpio
-echo "  -> coldfire_gpio"
-
-echo "=== ColdFire Raptor BSP startup-path validation (m68k) ==="
-# Use BSP-shaped SR/RAMBAR/SP/VBR startup and vector layout.
-$M68K_CC -mcpu=5208 -O2 -nostdlib -nostartfiles -ffreestanding \
-  -T link_m68k_bsp_startup.ld -Wl,--build-id=none \
-  coldfire_bsp_startup.S coldfire_bsp_startup.c -o coldfire_bsp_startup
-echo "  -> coldfire_bsp_startup"
-
 echo "=== ColdFire mcf5208evb balar vectorAdd (m68k) ==="
 $M68K_CC $M68K_FLAGS coldfire_startup.S coldfire_gpu.c -o coldfire_gpu
 echo "  -> coldfire_gpu"

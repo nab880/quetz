@@ -1,6 +1,6 @@
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include "doctest.h"
-#include "../../quetz_window_cache.h"
+#include "../../src/quetz_window_cache.h"
 
 using SST::Quetz::WindowDataCache;
 using Bytes = std::vector<uint8_t>;

@@ -1,7 +1,7 @@
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include "doctest.h"
 
-#include "../../qemu_plugin/decoder_riscv.h"
+#include "../../src/qemu_plugin/decoder_riscv.h"
 
 using SST::Quetz::classify_riscv_insn;
 using SST::Quetz::classify_rvc_rv64;

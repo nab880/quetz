@@ -1,6 +1,6 @@
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include "doctest.h"
-#include "../../quetz_window_cache_bank.h"
+#include "../../src/quetz_window_cache_bank.h"
 
 using SST::Quetz::WindowCacheBank;
 using SST::Quetz::WindowDataCache;

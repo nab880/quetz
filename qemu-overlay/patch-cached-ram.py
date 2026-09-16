@@ -1,13 +1,11 @@
-"""Idempotent QEMU 9.2.1 data-only P1/P2 cache routing for Raptor/Quetz.
-
-Instruction fetch and native DMA retain the real shared RAM backing. Only a
-cacheable data TLB entry points at the internal MMIO alias above 4 GiB. This
-keeps one cache/replacement pool in SST, rather than a second native RAM cache.
-"""
+"""Apply optional ColdFire data-cache routing to registered native regions."""
 from pathlib import Path
 import sys
 
 root = Path(sys.argv[1])
+cpu_header = (root / "target/m68k/cpu.h").read_text()
+if "bool quetz_cache_ram;" in cpu_header and "quetz_cache_region_base[2]" not in cpu_header:
+    raise SystemExit("old cache overlay present; use pristine pinned QEMU sources")
 
 
 def replace(path, marker, anchor, replacement, *, after=None):
@@ -26,11 +24,14 @@ def replace(path, marker, anchor, replacement, *, after=None):
 replace(root / "target/m68k/cpu.h", "uint32_t quetz_acr[4];",
         "    uint32_t cacr;\n",
         "    uint32_t cacr;\n    uint32_t quetz_acr[4];\n")
-replace(root / "target/m68k/cpu.h", "bool quetz_cache_ram;",
+replace(root / "target/m68k/cpu.h", "uint32_t quetz_cache_region_base[2];",
         "    struct {} end_reset_fields;\n",
         "    struct {} end_reset_fields;\n"
         "    /* Board wiring survives architectural CPU reset. */\n"
-        "    bool quetz_cache_ram;\n")
+        "    bool quetz_cache_ram;\n"
+        "    uint32_t quetz_cache_region_count;\n"
+        "    uint32_t quetz_cache_region_base[2];\n"
+        "    uint32_t quetz_cache_region_size[2];\n")
 
 helper = root / "target/m68k/helper.c"
 replace(helper, "Quetz cacheability changes invalidate native data TLB entries",
@@ -72,15 +73,24 @@ static bool quetz_native_data_cacheable(CPUM68KState *env, uint32_t address)
 }
 
 """
+regions = """static bool quetz_native_region_contains(CPUM68KState *env, uint32_t address)
+{
+    for (unsigned i = 0; i < env->quetz_cache_region_count; ++i)
+        if (address >= env->quetz_cache_region_base[i] &&
+            address - env->quetz_cache_region_base[i] < env->quetz_cache_region_size[i])
+            return true;
+    return false;
+}
+
+"""
 replace(helper, "static bool quetz_native_data_cacheable",
         "bool m68k_cpu_tlb_fill(CPUState *cs, vaddr address, int size,\n",
-        mode + "bool m68k_cpu_tlb_fill(CPUState *cs, vaddr address, int size,\n")
+        mode + regions + "bool m68k_cpu_tlb_fill(CPUState *cs, vaddr address, int size,\n")
 
 routing = """    /* Quetz native RAM data route: never redirect instruction fetch.
      * Separate permissions force a refill if code and data share a TLB page. */
     if (env->quetz_cache_ram &&
-        ((address >= 0x80000000u && address < 0x80010000u) ||
-         (address >= 0x40000000u && address < 0x40010000u)) &&
+        quetz_native_region_contains(env, address) &&
         quetz_native_data_cacheable(env, address)) {
         if (env->mmu.tcr & M68K_TCR_ENABLED) {
             cpu_abort(cs, "Quetz cached RAM does not support address translation");
@@ -104,4 +114,4 @@ replace(helper, "Quetz native RAM data route:",
         "    target_ulong page_size;\n\n" + routing +
         "    if ((env->mmu.tcr & M68K_TCR_ENABLED) == 0) {\n",
         after="bool m68k_cpu_tlb_fill(")
-print("Raptor cached native RAM overlay applied")
+print("ColdFire registered native RAM overlay applied")

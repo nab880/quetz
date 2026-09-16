@@ -1,7 +1,7 @@
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include "doctest.h"
 
-#include "../../quetz_ipc_types.h"
+#include "../../src/quetz_ipc_types.h"
 
 // Mirrors compute_latency vs detailed_instruction_tracking validation
 // in quetz_config.cc (without instantiating SST Params).

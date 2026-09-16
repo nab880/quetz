@@ -5,19 +5,14 @@
 #include <cstdint>
 #include <cstdio>
 #include <new>
+#include <memory>
 #include <sys/mman.h>
 #include <unistd.h>
 
-#include "../../quetz_ipc_types.h"
+#include "../../src/quetz_ipc_types.h"
 
-namespace Overlay {
-#include "../../qemu-overlay/include/quetz/quetz_ipc_types.h"
-constexpr uint32_t Magic = QUETZ_SHM_MAGIC;
-}
-#undef QUETZ_SHM_MAGIC
-#undef QUETZ_LOCAL_RAM_BYTES
-#undef QUETZ_MAX_MMIO_VCORES
-#undef QUETZ_MAX_IRQ_LINES
+extern "C" size_t quetz_c_layout(unsigned field);
+extern "C" uint8_t *quetz_c_native_ram(QuetzSharedData *, unsigned);
 
 using SST::Quetz::QuetzCommand;
 using SST::Quetz::QUETZ_CMD_DATA_BYTES;
@@ -53,9 +48,6 @@ TEST_CASE("QuetzSharedData layout") {
     CHECK(QuetzShmemCmd::QUETZ_CMD_MMIO_WRITE_REQ == 5);
 }
 
-// The IRQ mailbox layout is shared with the QEMU overlay's C mirror
-// (qemu-overlay/include/quetz/quetz_ipc_types.h) — these pins
-// catch a drift between the two copies.
 TEST_CASE("QuetzIrqSlot layout") {
     using SST::Quetz::QuetzIrqSlot;
     using SST::Quetz::QUETZ_MAX_IRQ_LINES;
@@ -68,16 +60,17 @@ TEST_CASE("QuetzIrqSlot layout") {
           sizeof(QuetzSharedData::mmio_req));
 }
 
-TEST_CASE("C and C++ IPC layouts include identical reset and RAM metadata") {
-    CHECK(sizeof(QuetzSharedData) == sizeof(Overlay::QuetzSharedData));
-    CHECK(SST::Quetz::QUETZ_SHM_MAGIC == Overlay::Magic);
-    CHECK(offsetof(QuetzSharedData, cpu_reset_epoch) ==
-          offsetof(Overlay::QuetzSharedData, cpu_reset_epoch));
-    CHECK(offsetof(QuetzSharedData, local_ram_offset) ==
-          offsetof(Overlay::QuetzSharedData, local_ram_offset));
-    CHECK(offsetof(QuetzSharedData, local_ram_storage) ==
-          offsetof(Overlay::QuetzSharedData, local_ram_storage));
-    CHECK(offsetof(QuetzSharedData, magic) == offsetof(Overlay::QuetzSharedData, magic));
+TEST_CASE("canonical IPC header has identical C and C++ layout") {
+    const size_t cpp[] = {sizeof(QuetzCommand), sizeof(QuetzSharedData),
+        sizeof(QuetzShmemCmd), sizeof(QuetzInsnClass),
+        offsetof(QuetzSharedData, cpu_reset_epoch),
+        offsetof(QuetzSharedData, native_region_count),
+        offsetof(QuetzSharedData, native_regions),
+        offsetof(QuetzSharedData, native_ram_storage),
+        offsetof(QuetzSharedData, magic), QUETZ_SHM_MAGIC};
+    for (unsigned i = 0; i < sizeof(cpp) / sizeof(cpp[0]); ++i) CHECK(cpp[i] == quetz_c_layout(i));
+    CHECK(sizeof(QuetzShmemCmd) == 4);
+    CHECK(sizeof(QuetzInsnClass) == 4);
 }
 
 TEST_CASE("native RAM keeps one offset across different mmap alignment residues") {
@@ -109,12 +102,13 @@ TEST_CASE("native RAM keeps one offset across different mmap alignment residues"
     REQUIRE(mmap(reinterpret_cast<void*>(second), length, PROT_READ | PROT_WRITE,
                  MAP_SHARED | MAP_FIXED, fileno(resources.file), 0) != MAP_FAILED);
     auto* sst = new(reinterpret_cast<void*>(first + shared_offset)) QuetzSharedData{};
-    auto* qemu = new(reinterpret_cast<void*>(second + shared_offset)) Overlay::QuetzSharedData;
-    SST::Quetz::quetzInitializeLocalRam(sst);
+    auto* qemu = new(reinterpret_cast<void*>(second + shared_offset)) QuetzSharedData;
+    const QuetzNativeRamRegion regions[] = {{0x12000000,65536,0,0}, {0x23000000,65536,0,0}};
+    REQUIRE(quetz_configure_native_regions(sst, regions, 2));
     CHECK((uintptr_t(sst) & 65535) != (uintptr_t(qemu) & 65535));
     for (unsigned bank = 0; bank < 2; ++bank) {
-        auto* a = SST::Quetz::quetzLocalRam(sst, bank);
-        auto* b = Overlay::quetz_local_ram(qemu, bank);
+        auto* a = quetz_native_ram(sst, bank);
+        auto* b = quetz_c_native_ram(qemu, bank);
         REQUIRE(a != nullptr); REQUIRE(b != nullptr);
         CHECK(a - reinterpret_cast<uint8_t*>(sst) == b - reinterpret_cast<uint8_t*>(qemu));
         CHECK((uintptr_t(a) & 65535) == 0);
@@ -124,12 +118,37 @@ TEST_CASE("native RAM keeps one offset across different mmap alignment residues"
         CHECK(b[0] == 0x21 + bank);
         CHECK(a[65535] == 0x81 + bank);
     }
-    CHECK(SST::Quetz::quetzLocalRam(sst, 2) == nullptr);
-    CHECK(Overlay::quetz_local_ram(qemu, 2) == nullptr);
-    sst->local_ram_offset = 0;
-    CHECK(SST::Quetz::quetzLocalRam(sst, 0) == nullptr);
-    CHECK(Overlay::quetz_local_ram(qemu, 0) == nullptr);
-    sst->local_ram_offset = UINT32_MAX;
-    CHECK(SST::Quetz::quetzLocalRam(sst, 0) == nullptr);
-    CHECK(Overlay::quetz_local_ram(qemu, 0) == nullptr);
+    CHECK(quetz_native_ram(sst, 2) == nullptr);
+    CHECK(quetz_c_native_ram(qemu, 2) == nullptr);
+    sst->native_regions[0].offset = 0;
+    CHECK(quetz_native_ram(sst, 0) == nullptr);
+    CHECK(quetz_c_native_ram(qemu, 0) == nullptr);
+    sst->native_regions[0].offset = UINT32_MAX;
+    CHECK(quetz_native_ram(sst, 0) == nullptr);
+    CHECK(quetz_c_native_ram(qemu, 0) == nullptr);
+}
+
+TEST_CASE("native descriptors reject malformed capacity overlap and bounds") {
+    auto shared = std::make_unique<QuetzSharedData>();
+    QuetzNativeRamRegion regions[] = {{0x12000000,65536,0,0}, {0x23000000,4096,0,0}};
+    REQUIRE(quetz_configure_native_regions(shared.get(), regions, 2));
+    CHECK(quetz_native_regions_valid(shared.get()));
+    auto good = shared->native_regions[1];
+    shared->native_regions[1].base = regions[0].base;
+    CHECK_FALSE(quetz_native_regions_valid(shared.get()));
+    shared->native_regions[1] = good;
+    shared->native_regions[1].offset = shared->native_regions[0].offset;
+    CHECK_FALSE(quetz_native_regions_valid(shared.get()));
+    shared->native_regions[1] = good;
+    shared->native_regions[1].size = 65537;
+    CHECK_FALSE(quetz_native_regions_valid(shared.get()));
+    shared->native_regions[1] = good;
+    shared->native_regions[1].base++;
+    CHECK_FALSE(quetz_native_regions_valid(shared.get()));
+    shared->native_regions[1] = good;
+    shared->native_regions[1].reserved = 1;
+    CHECK_FALSE(quetz_native_regions_valid(shared.get()));
+    CHECK_FALSE(quetz_configure_native_regions(shared.get(), regions, 3));
+    CHECK(quetz_configure_native_regions(shared.get(), nullptr, 0));
+    CHECK(quetz_native_ram(shared.get(), 0) == nullptr);
 }

@@ -1,33 +1,13 @@
 #!/bin/sh
-# Apply Quetz MMIO overlay into an extracted QEMU ${QEMU_VERSION} source tree.
-# Fail loud on any error — we cannot silently degrade.
 set -eu
 QEMU_SRC="${1:-.}"
 OVERLAY="$(cd "$(dirname "$0")" && pwd)"
-
-[ -d "$QEMU_SRC/hw/misc" ] || { echo "ERROR: $QEMU_SRC does not look like QEMU"; exit 1; }
-
-cp "$OVERLAY/hw/misc/sst_mmio_bridge.c" "$QEMU_SRC/hw/misc/sst_mmio_bridge.c"
-cp "$OVERLAY/hw/misc/mcf_bsp_compat.c" "$QEMU_SRC/hw/misc/mcf_bsp_compat.c"
-cp "$OVERLAY/hw/misc/raptor_bsp_blocks.h" "$QEMU_SRC/hw/misc/raptor_bsp_blocks.h"
-cp "$OVERLAY/hw/misc/mcf_dtimer.c" "$QEMU_SRC/hw/misc/mcf_dtimer.c"
-cp "$OVERLAY/hw/misc/raptor_dtimer_blocks.h" "$QEMU_SRC/hw/misc/raptor_dtimer_blocks.h"
-cp "$OVERLAY/hw/misc/mcf_gpio.c" "$QEMU_SRC/hw/misc/mcf_gpio.c"
-cp "$OVERLAY/hw/misc/raptor_edma.c" "$QEMU_SRC/hw/misc/raptor_edma.c"
-cp "$OVERLAY/hw/misc/raptor_gpio_blocks.h" "$QEMU_SRC/hw/misc/raptor_gpio_blocks.h"
-cp "$OVERLAY/quetz_ipc_client.c"        "$QEMU_SRC/hw/misc/quetz_ipc_client.c"
-
-mkdir -p "$QEMU_SRC/hw/m68k"
-cp "$OVERLAY/hw/m68k/raptor.c" "$QEMU_SRC/hw/m68k/raptor.c"
-cp "$OVERLAY/hw/m68k/raptor_boot.c" "$QEMU_SRC/hw/m68k/raptor_boot.c"
-cp "$OVERLAY/hw/m68k/raptor_boot.h" "$QEMU_SRC/hw/m68k/raptor_boot.h"
-cp "$OVERLAY/hw/m68k/raptor_multicore.c" "$QEMU_SRC/hw/m68k/raptor_multicore.c"
-cp "$OVERLAY/hw/m68k/raptor_multicore.h" "$QEMU_SRC/hw/m68k/raptor_multicore.h"
-
+[ -d "$QEMU_SRC/hw/misc" ] || { echo "Not a QEMU source tree: $QEMU_SRC" >&2; exit 1; }
+cp "$OVERLAY/hw/misc/sst_mmio_bridge.c" "$QEMU_SRC/hw/misc/"
+cp "$OVERLAY/quetz_ipc_client.c" "$QEMU_SRC/hw/misc/"
 mkdir -p "$QEMU_SRC/include/quetz"
-cp "$OVERLAY/include/quetz/quetz_ipc_client.h" "$QEMU_SRC/include/quetz/"
-cp "$OVERLAY/include/quetz/quetz_ipc_types.h"  "$QEMU_SRC/include/quetz/"
-
+cp "$OVERLAY/../include/quetz/quetz_ipc_types.h" "$QEMU_SRC/include/quetz/"
+cp "$OVERLAY/../include/quetz/quetz_ipc_client.h" "$QEMU_SRC/include/quetz/"
 # Append softmmu source registrations to hw/misc/meson.build.
 HW_MESON="$QEMU_SRC/hw/misc/meson.build"
 if ! grep -q sst_mmio_bridge.c "$HW_MESON"; then
@@ -38,238 +18,6 @@ system_ss.add(files('sst_mmio_bridge.c'))
 system_ss.add(files('quetz_ipc_client.c'))
 EOF
 fi
-
-M68K_MESON="$QEMU_SRC/hw/m68k/meson.build"
-if ! grep -q "files('raptor.c')" "$M68K_MESON"; then
-    cat >> "$M68K_MESON" <<'EOF'
-
-# Quetz Raptor Core2 functional-profile machine
-m68k_ss.add(files('raptor.c'))
-EOF
-fi
-
-if ! grep -q "files('raptor_boot.c')" "$M68K_MESON"; then
-    echo "m68k_ss.add(files('raptor_boot.c'))" >> "$M68K_MESON"
-fi
-if ! grep -q "files('raptor_edma.c')" "$HW_MESON"; then
-    echo "system_ss.add(files('raptor_edma.c'))" >> "$HW_MESON"
-fi
-if ! grep -q "files('raptor_multicore.c')" "$M68K_MESON"; then
-    echo "m68k_ss.add(files('raptor_multicore.c'))" >> "$M68K_MESON"
-fi
-
-# Retain BSP RAMBAR writes that stock cfv4e QEMU rejects.
-QEMU_SRC="$QEMU_SRC" python3 - <<'PY'
-import os
-
-src = os.environ["QEMU_SRC"]
-
-cpu_h = os.path.join(src, "target/m68k/cpu.h")
-text = open(cpu_h).read()
-if "uint32_t rambar1;" not in text:
-    anchor = "    uint32_t rambar0;\n"
-    assert text.count(anchor) == 1, (
-        "RAMBAR state anchor is missing or ambiguous in target/m68k/cpu.h"
-    )
-    text = text.replace(anchor, anchor + "    uint32_t rambar1;\n", 1)
-    open(cpu_h, "w").write(text)
-
-helper = os.path.join(src, "target/m68k/helper.c")
-text = open(helper).read()
-marker = "case M68K_CR_RAMBAR1:"
-if marker not in text:
-    anchor = "    case M68K_CR_VBR:\n        env->vbr = val;\n        break;\n"
-    assert text.count(anchor) == 1, (
-        "ColdFire MOVEC anchor is missing or ambiguous in target/m68k/helper.c"
-    )
-    insert = (
-        "    case M68K_CR_RAMBAR0:\n"
-        "        env->rambar0 = val;\n"
-        "        break;\n"
-        "    case M68K_CR_RAMBAR1:\n"
-        "        env->rambar1 = val;\n"
-        "        break;\n"
-    )
-    text = text.replace(anchor, anchor + insert, 1)
-    open(helper, "w").write(text)
-
-cpu_c = os.path.join(src, "target/m68k/cpu.c")
-text = open(cpu_c).read()
-if "VMSTATE_UINT32_V(env.rambar1" not in text:
-    start = text.index("const VMStateDescription vmstate_cf_spregs")
-    end = text.index("};", start)
-    block = text[start:end]
-    block = block.replace(".version_id = 1", ".version_id = 2", 1)
-    anchor = "        VMSTATE_UINT32(env.rambar0, M68kCPU),\n"
-    assert anchor in block, "RAMBAR migration anchor missing in target/m68k/cpu.c"
-    block = block.replace(
-        anchor,
-        anchor + "        VMSTATE_UINT32_V(env.rambar1, M68kCPU, 2),\n",
-        1,
-    )
-    text = text[:start] + block + text[end:]
-    open(cpu_c, "w").write(text)
-
-print("Raptor RAMBAR overlay applied")
-PY
-python3 "$OVERLAY/patch-cached-ram.py" "$QEMU_SRC"
-if ! grep -q mcf_bsp_compat.c "$HW_MESON"; then
-    cat >> "$HW_MESON" <<'EOF'
-system_ss.add(files('mcf_bsp_compat.c'))
-EOF
-fi
-if ! grep -q mcf_dtimer.c "$HW_MESON"; then
-    cat >> "$HW_MESON" <<'EOF'
-system_ss.add(files('mcf_dtimer.c'))
-EOF
-fi
-if ! grep -q mcf_gpio.c "$HW_MESON"; then
-    cat >> "$HW_MESON" <<'EOF'
-system_ss.add(files('mcf_gpio.c'))
-EOF
-fi
-
-# Mark device user-creatable through default Kconfig (sst-mmio-bridge is built
-# unconditionally; no Kconfig symbol needed).
-
-# --- hw/m68k/mcf_intc.c: expose the 64 interrupt inputs as qdev GPIOs -------
-# The mcf5208evb machine wires its devices through qemu_allocate_irqs() and
-# frees the array, so a foreign device (sst-mmio-bridge IRQ injection) has no
-# path to the controller inputs. Registering them as qdev GPIO inputs makes
-# them addressable via qdev_get_gpio_in(dev, line); mcf_intc_set_irq already
-# has the qemu_irq_handler signature and casts its opaque from the device
-# pointer, which is what qdev GPIOs pass. Anchor-based + idempotent, like the
-# linux-user edits below.
-if [ -f "$QEMU_SRC/hw/m68k/mcf_intc.c" ]; then
-    QEMU_SRC="$QEMU_SRC" python3 - <<'PY'
-import os
-src = os.environ["QEMU_SRC"]
-p = os.path.join(src, "hw/m68k/mcf_intc.c")
-s = open(p).read()
-if "qdev_init_gpio_in" not in s:
-    anchor = ('    memory_region_init_io(&s->iomem, obj, &mcf_intc_ops, s,'
-              ' "mcf", 0x100);\n')
-    assert anchor in s, "anchor missing in hw/m68k/mcf_intc.c"
-    ins = ("    /* Quetz overlay: expose the 64 interrupt inputs as qdev GPIOs\n"
-           "     * so sst-mmio-bridge can inject SST-device IRQs by line. */\n"
-           "    qdev_init_gpio_in(DEVICE(obj), mcf_intc_set_irq, 64);\n")
-    s = s.replace(anchor, anchor + ins, 1)
-    open(p, "w").write(s)
-print("mcf_intc qdev GPIO overlay applied")
-PY
-
-    # Decode IL/IP only for Raptor; stock mcf5208evb keeps numeric levels.
-    QEMU_SRC="$QEMU_SRC" python3 - <<'PY'
-import os
-src = os.environ["QEMU_SRC"]
-p = os.path.join(src, "hw/m68k/mcf_intc.c")
-s = open(p).read()
-if "il_ip_priority" not in s:
-    s = s.replace(
-        "    M68kCPU *cpu;\n    int active_vector;\n",
-        "    M68kCPU *cpu;\n    bool il_ip_priority;\n    int active_vector;\n",
-        1,
-    )
-    s = s.replace(
-        "    int best_level;\n",
-        "    int best_level;\n    int best_rank;\n",
-        1,
-    )
-    s = s.replace(
-        "    best_level = 0;\n    best = 64;\n",
-        "    best_level = 0;\n    best_rank = -1;\n    best = 64;\n",
-        1,
-    )
-    old = (
-        "            if ((active & 1) != 0 && s->icr[i] >= best_level) {\n"
-        "                best_level = s->icr[i];\n"
-        "                best = i;\n"
-        "            }\n"
-    )
-    new = (
-        "            int rank = s->il_ip_priority ? (s->icr[i] & 0x3f)\n"
-        "                                             : s->icr[i];\n"
-        "            int level = s->il_ip_priority ? ((rank >> 3) & 7)\n"
-        "                                              : rank;\n"
-        "            if ((active & 1) != 0 && rank >= best_rank) {\n"
-        "                best_rank = rank;\n"
-        "                best_level = level;\n"
-        "                best = i;\n"
-        "            }\n"
-    )
-    assert old in s, "priority anchor missing in hw/m68k/mcf_intc.c"
-    s = s.replace(old, new, 1)
-
-    prop_anchor = (
-        '    DEFINE_PROP_LINK("m68k-cpu", mcf_intc_state, cpu,\n'
-        '                     TYPE_M68K_CPU, M68kCPU *),\n'
-    )
-    assert prop_anchor in s, "property anchor missing in hw/m68k/mcf_intc.c"
-    s = s.replace(
-        prop_anchor,
-        prop_anchor
-        + '    DEFINE_PROP_BOOL("il-ip-priority", mcf_intc_state,\n'
-          '                     il_ip_priority, false),\n',
-        1,
-    )
-
-    signature = (
-        "qemu_irq *mcf_intc_init(MemoryRegion *sysmem,\n"
-        "                        hwaddr base,\n"
-        "                        M68kCPU *cpu)\n"
-    )
-    replacement = (
-        "qemu_irq *mcf_intc_init_ext(MemoryRegion *sysmem,\n"
-        "                            hwaddr base,\n"
-        "                            M68kCPU *cpu,\n"
-        "                            bool il_ip_priority)\n"
-    )
-    assert signature in s, "init anchor missing in hw/m68k/mcf_intc.c"
-    s = s.replace(signature, replacement, 1)
-    link_anchor = (
-        '    object_property_set_link(OBJECT(dev), "m68k-cpu",\n'
-        '                             OBJECT(cpu), &error_abort);\n'
-    )
-    assert link_anchor in s, "link anchor missing in hw/m68k/mcf_intc.c"
-    s = s.replace(
-        link_anchor,
-        link_anchor
-        + '    object_property_set_bool(OBJECT(dev), "il-ip-priority",\n'
-          '                             il_ip_priority, &error_abort);\n',
-        1,
-    )
-    s += (
-        "\nqemu_irq *mcf_intc_init(MemoryRegion *sysmem, hwaddr base,\n"
-        "                        M68kCPU *cpu)\n"
-        "{\n"
-        "    return mcf_intc_init_ext(sysmem, base, cpu, false);\n"
-        "}\n"
-    )
-    open(p, "w").write(s)
-
-header = os.path.join(src, "include/hw/m68k/mcf.h")
-h = open(header).read()
-if "mcf_intc_init_ext" not in h:
-    anchor = (
-        "qemu_irq *mcf_intc_init(struct MemoryRegion *sysmem,\n"
-        "                        hwaddr base,\n"
-        "                        M68kCPU *cpu);\n"
-    )
-    assert anchor in h, "INTC header anchor missing in include/hw/m68k/mcf.h"
-    h = h.replace(
-        anchor,
-        anchor
-        + "qemu_irq *mcf_intc_init_ext(struct MemoryRegion *sysmem,\n"
-          "                            hwaddr base,\n"
-          "                            M68kCPU *cpu,\n"
-          "                            bool il_ip_priority);\n",
-        1,
-    )
-    open(header, "w").write(h)
-print("mcf_intc scoped functional priority overlay applied")
-PY
-fi
-
 # --- linux-user (P6): SIGSEGV-trap synchronous MMIO --------------------------
 # System mode traps the doorbell with the sst-mmio-bridge device; user mode has
 # no device map, so qemu-<arch> reserves the aperture PROT_NONE and routes the
@@ -290,7 +38,7 @@ def patch(path, edits):
     for marker, anchor, ins, after in edits:
         if marker in s:
             continue
-        assert anchor in s, "anchor missing in %s: %r" % (path, anchor)
+        assert s.count(anchor) == 1, "anchor missing/ambiguous in %s: %r" % (path, anchor)
         s = s.replace(anchor, (anchor + ins) if after else (ins + anchor), 1)
     open(p, "w").write(s)
 
@@ -335,3 +83,5 @@ PY
 fi
 
 echo "Quetz QEMU overlay applied under $QEMU_SRC"
+
+printf '%s\n' quetz-generic-v5 > "$QEMU_SRC/.quetz-generic-overlay"

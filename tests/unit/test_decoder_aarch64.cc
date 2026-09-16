@@ -1,7 +1,7 @@
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include "doctest.h"
 
-#include "../../qemu_plugin/decoder_aarch64.h"
+#include "../../src/qemu_plugin/decoder_aarch64.h"
 
 using SST::Quetz::classify_aarch64_insn;
 using SST::Quetz::QUETZ_INSN_BRANCH;

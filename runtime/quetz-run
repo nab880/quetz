@@ -1,0 +1,78 @@
+#!/usr/bin/env bash
+# quetz-run [--deck PATH] [--firmware ELF] [--env KEY=VALUE] [--out DIR]
+#           [--timeout SEC] [--image NAME] [--no-docker] [--quiet]
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ -d "${SCRIPT_DIR}/../tests" ]; then
+    ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+else
+    ROOT="${QUETZ_ASSETS:-/opt/sst/share/quetz}"
+fi
+DECK="${ROOT}/tests/sysmode/basic_quetz_system_demo.py"
+FIRMWARE=""
+OUT=artifacts
+LIMIT=60
+IMAGE=quetz-sim
+NO_DOCKER=0
+QUIET=0
+EXTRA_ENV=()
+fail() { echo "quetz-run: $*" >&2; exit 1; }
+value() { [ "$#" -ge 2 ] && [ -n "$2" ] && [[ "$2" != --* ]] || fail "$1 needs a value"; }
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --deck) value "$@"; DECK="$2"; shift 2 ;;
+        --firmware) value "$@"; FIRMWARE="$2"; shift 2 ;;
+        --env) value "$@"; [[ "$2" =~ ^[a-zA-Z_][a-zA-Z_0-9]*= ]] || fail 'invalid environment assignment'; EXTRA_ENV+=("$2"); shift 2 ;;
+        --out) value "$@"; OUT="$2"; shift 2 ;;
+        --timeout) value "$@"; LIMIT="$2"; shift 2 ;;
+        --image) value "$@"; IMAGE="$2"; shift 2 ;;
+        --no-docker) NO_DOCKER=1; shift ;;
+        --quiet) QUIET=1; shift ;;
+        -h|--help) sed -n '2,3s/^# //p' "${BASH_SOURCE[0]}"; exit 0 ;;
+        *) fail "unknown argument: $1" ;;
+    esac
+done
+[[ "${LIMIT}" =~ ^[1-9][0-9]*$ ]] || fail 'timeout must be a positive integer'
+[ -f "${DECK}" ] || fail "deck not found: ${DECK}"
+DECK="$(cd "$(dirname "${DECK}")" && pwd)/$(basename "${DECK}")"
+if [ -n "${FIRMWARE}" ]; then
+    [ -f "${FIRMWARE}" ] || fail "firmware not found: ${FIRMWARE}"
+    FIRMWARE="$(cd "$(dirname "${FIRMWARE}")" && pwd)/$(basename "${FIRMWARE}")"
+fi
+mkdir -p "${OUT}"
+OUT="$(cd "${OUT}" && pwd)"
+if [ "${NO_DOCKER}" = 0 ] && [ ! -f /.dockerenv ]; then
+    ARGS=(--no-docker --deck "/deck/$(basename "${DECK}")" --out /out --timeout "${LIMIT}")
+    MOUNTS=(-v "$(dirname "${DECK}"):/deck:ro" -v "${OUT}:/out")
+    if [ -n "${FIRMWARE}" ]; then
+        MOUNTS+=(-v "${FIRMWARE}:/firmware.elf:ro")
+        ARGS+=(--firmware /firmware.elf)
+    fi
+    for item in ${EXTRA_ENV[@]+"${EXTRA_ENV[@]}"}; do ARGS+=(--env "${item}"); done
+    [ "${QUIET}" = 0 ] || ARGS+=(--quiet)
+    exec docker run --rm "${MOUNTS[@]}" "${IMAGE}" quetz-run "${ARGS[@]}"
+fi
+command -v sst >/dev/null || fail 'sst is not on PATH'
+TIMEOUT=timeout
+command -v "${TIMEOUT}" >/dev/null || TIMEOUT=gtimeout
+command -v "${TIMEOUT}" >/dev/null || fail 'timeout or gtimeout is required'
+rm -f "${OUT}/uart.txt" "${OUT}/stats.csv" "${OUT}/result.txt"
+for item in ${EXTRA_ENV[@]+"${EXTRA_ENV[@]}"}; do export "${item}"; done
+export QUETZ_STDOUT_FILE="${OUT}/uart.txt" QUETZ_STATS_OUT="${OUT}/stats.csv"
+[ -z "${FIRMWARE}" ] || export QUETZ_EXE="${FIRMWARE}"
+set +e
+"${TIMEOUT}" "${LIMIT}" sst "${DECK}" > "${OUT}/sst.log" 2>&1
+STATUS=$?
+set -e
+RESULT=ERROR
+CODE=1
+if [ "${STATUS}" = 0 ]; then
+    if grep -Eq 'TESTFINISH\[[0-9]+\].*\(FAIL\)' "${OUT}/sst.log"; then
+        RESULT=FAIL; CODE=2
+    elif grep -Eq 'TESTFINISH\[[0-9]+\].*\(PASS\)' "${OUT}/sst.log"; then
+        RESULT=PASS; CODE=0
+    fi
+fi
+printf '%s: simulator exit %s\n' "${RESULT}" "${STATUS}" > "${OUT}/result.txt"
+[ "${QUIET}" = 1 ] || echo "quetz-run: ${RESULT}; artifacts in ${OUT}"
+exit "${CODE}"
