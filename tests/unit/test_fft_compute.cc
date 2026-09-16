@@ -147,7 +147,7 @@ TEST_CASE("impulse -> all ones (bit-exact; matches the firmware check)") {
     }
 }
 
-TEST_CASE("Raptor reference eighth-rate complex tone selects forward bin") {
+TEST_CASE("Firmware reference eighth-rate complex tone selects forward bin") {
     const uint32_t N = 256;
     std::vector<QuetzCf> a = firmware_reference_input();
     quetz_fft_radix2(a.data(), N);
@@ -177,7 +177,7 @@ TEST_CASE("Raptor reference eighth-rate complex tone selects forward bin") {
     CHECK(checksum == 0xb9b06c06u);
 }
 
-TEST_CASE("Raptor reference checksum encodes peak-bin placement") {
+TEST_CASE("Firmware reference checksum encodes peak-bin placement") {
     const uint32_t bin32_checksum = canonical_reference_checksum(32u);
     const uint32_t bin64_checksum = canonical_reference_checksum(64u);
 
@@ -186,7 +186,7 @@ TEST_CASE("Raptor reference checksum encodes peak-bin placement") {
     CHECK(bin32_checksum != bin64_checksum);
 }
 
-TEST_CASE("Raptor reference rejects zeroed non-quadrant twiddles") {
+TEST_CASE("Firmware reference rejects zeroed non-quadrant twiddles") {
     std::vector<QuetzCf> a = firmware_reference_input();
     uint32_t active_mutations =
         fft_with_non_quadrant_twiddles_zeroed(a.data(), (uint32_t)a.size());

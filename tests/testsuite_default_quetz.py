@@ -2830,7 +2830,7 @@ class testcase_quetz_p6_usermode(SSTTestCase):
             blob = ""
         if "sst-mmio-range" not in blob:
             self.skipTest("{} lacks -sst-mmio-range (rebuild via "
-                          "sst-elements/src/sst/elements/quetz/qemu-overlay/"
+                          "qemu-overlay/"
                           "apply-qemu-overlay.sh); skipping".format(target))
 
     def _common_env(self, qemu_bin, exe_abs):

@@ -11,7 +11,7 @@
 namespace SST { namespace Quetz {
 
 // MCF548x/V4e proxy: 32 KiB, four ways, 16-byte lines (MCF5485RM 7.8–7.11; CFPRM CPUSHL).
-// This geometry is not a verified Raptor silicon specification.
+// This geometry is a simulator model, not a verified silicon specification.
 // Allocate the lowest invalid way, then use a cache-wide two-bit round-robin counter; hits do not advance it.
 // Transactions and writebacks are serialized; timing, store buffering and snooping are unsupported.
 class WindowDataCache {

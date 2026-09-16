@@ -5,6 +5,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [ -d "${SCRIPT_DIR}/../tests" ]; then
     ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+elif [ -d "${SCRIPT_DIR}/../share/quetz/tests" ]; then
+    ROOT="$(cd "${SCRIPT_DIR}/../share/quetz" && pwd)"
 else
     ROOT="${QUETZ_ASSETS:-/opt/sst/share/quetz}"
 fi
