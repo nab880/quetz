@@ -40,7 +40,8 @@ RUN git init /src/sst-elements \
     && mkdir -p /build/sst-elements && cd /build/sst-elements \
     && /src/sst-elements/configure --prefix="${SST_PREFIX}" --with-sst-core="${SST_PREFIX}" --without-pin \
     && make -j"${BUILD_JOBS}" install
-RUN cmake -S /src/quetz -B /build/quetz -DCMAKE_INSTALL_PREFIX="${SST_PREFIX}" \
+RUN cmake -S /src/quetz -B /build/quetz -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX="${SST_PREFIX}" \
         -DSST_ROOT="${SST_PREFIX}" -DQEMU_PLUGIN_INCLUDE_DIR="${QEMU_PREFIX}/include" \
     && cmake --build /build/quetz -j"${BUILD_JOBS}" \
     && ctest --test-dir /build/quetz --output-on-failure \

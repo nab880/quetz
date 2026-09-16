@@ -10,7 +10,7 @@ runtime/quetz-run --out artifacts/hello
 For an existing Linux installation, provide SST core, CMake, a C++17 compiler, pkg-config, GLib development headers and the matching QEMU plugin header:
 
 ```sh
-cmake -S . -B build -DSST_ROOT=/opt/sst \
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DSST_ROOT=/opt/sst \
   -DQEMU_PLUGIN_INCLUDE_DIR=/opt/qemu/include -DCMAKE_INSTALL_PREFIX=/opt/quetz
 cmake --build build --parallel 2
 ctest --test-dir build --output-on-failure
