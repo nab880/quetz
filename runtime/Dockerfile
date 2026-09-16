@@ -44,6 +44,7 @@ RUN git init /src/sst-elements \
 RUN cmake -S /src/quetz -B /build/quetz -DCMAKE_INSTALL_PREFIX="${SST_PREFIX}" \
         -DSST_ROOT="${SST_PREFIX}" -DQEMU_PLUGIN_INCLUDE_DIR="${QEMU_PREFIX}/include" \
     && cmake --build /build/quetz -j"${BUILD_JOBS}" \
+    && ctest --test-dir /build/quetz --output-on-failure \
     && cmake --install /build/quetz \
     && "${SST_PREFIX}/bin/quetz-register"
 RUN cd /src/quetz/tests/sysmode/firmware \
