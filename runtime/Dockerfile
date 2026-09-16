@@ -22,8 +22,7 @@ RUN echo "${QEMU_SHA256}  /src/quetz/runtime/cache/qemu-${QEMU_VERSION}.tar.xz" 
     && cd "/tmp/qemu-${QEMU_VERSION}" \
     && ./configure --prefix="${QEMU_PREFIX}" --target-list="${QEMU_TARGET_LIST}" --enable-plugins \
     && make -j"${BUILD_JOBS}" && make install \
-    && mkdir -p "${QEMU_PREFIX}/include" \
-    && cp include/plugins/qemu-plugin.h "${QEMU_PREFIX}/include/" \
+    && test -f "${QEMU_PREFIX}/include/qemu-plugin.h" \
     && rm -rf "/tmp/qemu-${QEMU_VERSION}" /src/quetz/runtime/cache
 RUN git init /src/sst-core \
     && git -C /src/sst-core fetch --depth 1 https://github.com/sstsimulator/sst-core.git "${SST_CORE_REVISION}" \
