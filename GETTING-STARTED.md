@@ -18,7 +18,7 @@ cmake --install build
 /opt/quetz/bin/quetz-register
 ```
 
-The install contains `lib/sst-elements-library/libquetz.so`, `libexec/libqemu_sst_plugin.so`, `include/quetz/` and `share/quetz/tests/`. Set `QUETZ_PLUGIN` to the installed plugin when its prefix differs from SST's. Set `SST_REGISTER` to select a different registration tool. Registration changes the selected SST registry, so use a separate HOME for isolated tests.
+The install contains `lib/sst-elements-library/libquetz.so`, `libexec/libqemu_sst_plugin.so`, `include/quetz/` and `share/quetz/tests/`. Set `QUETZ_PLUGIN` to the installed plugin when its prefix differs from SST's. Set `SST_REGISTER` to select a different registration tool. Registration updates the selected SST installation registry when it is writable. For isolated runs, skip registration and set `SST_LIB_PATH=/opt/quetz/lib/sst-elements-library` instead.
 
 Apply overlays to pristine pinned QEMU sources, in order:
 
