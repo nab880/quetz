@@ -20,3 +20,5 @@ runtime/quetz-run --out artifacts/hello
 The runner writes `sst.log`, guest `uart.txt` and `result.txt`; PASS requires both a successful simulator exit and the TestFinisher PASS sentinel. Timeout, missing sentinel and explicit failure remain failures. Set `--deck` for another deck and `--firmware` for an explicit ELF. Custom decks must bring their own adjacent Python helpers and assets.
 
 `tests/testsuite_default_quetz.py` and `tests/expanded_coldfire_tests.py` contain the broader SST test-framework integration suites. They require the corresponding cross-compiled fixtures and QEMU targets. Platform board, boot, recovery and application acceptance tests are maintained by each platform repository.
+
+The GitHub Actions workflow builds the model tests and a complete standalone Docker runtime, then runs the stock ColdFire example. It checks out only this repository; no platform sources or board configuration are required.

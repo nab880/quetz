@@ -1,0 +1,40 @@
+name: Standalone Quetz
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  models:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build independent models and ABI tests
+        run: |
+          cmake -S . -B build -DQUETZ_BUILD_RUNTIME=OFF
+          cmake --build build --parallel 2
+          ctest --test-dir build --output-on-failure
+  runtime:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cache verified QEMU archive
+        uses: actions/cache@v4
+        with:
+          path: runtime/cache
+          key: qemu-9.2.1-72874fe9c395ced0c7fd7c22c43744072697f7ee1926a72237bd81784b2faf62
+      - name: Build Quetz runtime without a platform checkout
+        run: runtime/build.sh
+      - name: Run stock ColdFire example
+        run: |
+          mkdir -p "$RUNNER_TEMP/quetz-smoke"
+          docker run --rm -v "$RUNNER_TEMP/quetz-smoke:/out" quetz-sim \
+            quetz-run --no-docker --out /out --timeout 120
+          grep -q '^PASS:' "$RUNNER_TEMP/quetz-smoke/result.txt"
+      - name: Save simulator evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: generic-runtime
+          path: ${{ runner.temp }}/quetz-smoke

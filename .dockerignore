@@ -1,0 +1,6 @@
+.git
+build*/
+artifacts/
+tests/unit/_build/
+**/__pycache__/
+**/*.pyc
