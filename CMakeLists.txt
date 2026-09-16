@@ -60,6 +60,11 @@ if(BUILD_TESTING)
   find_package(Python3 COMPONENTS Interpreter)
   if(Python3_FOUND)
     add_test(NAME cache_policy COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/test_cache_policy.py")
+    if(QUETZ_BUILD_RUNTIME AND EXISTS "${SST_ROOT}/bin/sst")
+      add_test(NAME invalid_configuration COMMAND "${Python3_EXECUTABLE}"
+          "${CMAKE_CURRENT_SOURCE_DIR}/tests/runtime/check_invalid_configuration.py"
+          --sst "${SST_ROOT}/bin/sst" --library-dir "$<TARGET_FILE_DIR:quetz>")
+    endif()
     add_test(NAME runtime_runner COMMAND "${Python3_EXECUTABLE}" -m unittest discover -s "${CMAKE_CURRENT_SOURCE_DIR}/tests/runtime" -p "test_*.py")
   endif()
 endif()

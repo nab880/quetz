@@ -283,9 +283,13 @@ void QuetzCPU::finish() {
 }
 
 void QuetzCPU::emergencyShutdown() {
-    frontend_->forceKill();
-    delete frontend_;
+    // SST can call this before constructor validation has created a frontend.
+    QemuFrontend* frontend = frontend_;
     frontend_ = nullptr;
+    if (frontend) {
+        frontend->forceKill();
+        delete frontend;
+    }
 }
 
 bool QuetzCPU::tick(SST::Cycle_t ) {
