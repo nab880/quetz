@@ -40,7 +40,7 @@ def main():
         linker = ["-undefined", "dynamic_lookup"] if sys.platform == "darwin" else []
         subprocess.run([args.cxx, "-std=c++17", "-shared", "-fPIC", *linker,
                         "-I" + args.qemu_plugin_include,
-                        "-I" + str(here.parent.parent / "qemu_plugin"), *glib,
+                        "-I" + str(here.parent.parent / "src/qemu_plugin"), *glib,
                         str(here / "coldfire_cache_api_probe.cpp"), "-o", str(plugin)],
                        check=True)
         subprocess.run([args.cc, "-mcpu=5475", "-nostdlib", "-nostartfiles",
