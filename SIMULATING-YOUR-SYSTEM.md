@@ -27,3 +27,6 @@ being redirected to CPU 0. Concurrent producers sharing an IPC slot hold its
 shared ownership lock through response consumption. Legacy `vcpu_id=0` aperture
 arguments remain accepted; nonzero fixed routing is rejected. m68k MOVE updates
 N/Z/V/C and preserves X, while MOVEA leaves all condition codes unchanged.
+
+User-mode MMIO supports threads within one QEMU process. Guest fork/exec process
+trees and recovery after a producer dies during a transaction are unsupported.
