@@ -45,6 +45,7 @@ public:
     }
 
     bool     isHalted()     const { return halted_; }
+    bool     sawGuestExit() const { return guest_exit_; }
     uint32_t pendingCount() const { return output_->pendingCount(); }
 
     // Fully drained: no buffered events, no in-flight memory transactions, and
@@ -53,11 +54,16 @@ public:
     // re-evaluated every tick, so a backlog drains over successive ticks before
     // this reports true.
     bool     isDrained()    const {
-        return coreQ_.empty() && output_->pendingCount() == 0 && !refill_hit_cap_;
+        // Halting discards the unexecuted trace tail. It must not leave a
+        // stale cap flag/queued tail preventing already accepted async work
+        // from retiring after outstanding memory responses have drained.
+        return output_->pendingCount() == 0 &&
+               (halted_ || (coreQ_.empty() && !refill_hit_cap_));
     }
 
 private:
     bool checkMaxInsts();
+    bool issueMemOp(uint32_t& issued);
 
     QuetzCoreContext&         ctx_;
     PipelineInput*            input_;
@@ -70,6 +76,9 @@ private:
     bool                      halted_;
     bool                      refill_hit_cap_;
     std::queue<PipelineEvent> coreQ_;
+    MemOp pending_op_{};
+    bool has_pending_op_ = false;
+    bool guest_exit_ = false;
 };
 
 } // namespace Quetz

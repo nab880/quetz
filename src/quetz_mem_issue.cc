@@ -10,6 +10,8 @@
 // distribution.
 
 #include "quetz_mem_issue.h"
+#include "quetz_memory_span.h"
+#include <limits>
 
 #include <algorithm>
 #include <cstring>
@@ -48,24 +50,29 @@ uint32_t MemRequestEmitter::slotsNeeded(uint64_t vaddr, uint32_t size,
                                         IssuePath path) const {
     if (path == IssuePath::MMIO)
         return 1;
-    if (size == 0) return 1;
-    uint64_t first_line = vaddr / cache_line_size_;
-    uint64_t last_line  = (vaddr + size - 1) / cache_line_size_;
-    return (uint32_t)(last_line - first_line + 1);
+    return memorySlots(vaddr, size, cache_line_size_);
 }
 
 void MemRequestEmitter::issueRead(uint64_t vaddr, uint32_t size, uint64_t ,
                                   IssuePath path) {
+    uint32_t offset = 0;
+    issueReadWindow(vaddr, size, 0, path, offset, UINT32_MAX);
+}
+
+uint32_t MemRequestEmitter::issueReadWindow(uint64_t vaddr, uint32_t size, uint64_t,
+                                           IssuePath path, uint32_t& offset,
+                                           uint32_t budget) {
+    if (size == 0 || budget == 0) return 0;
+    if (!memorySpanValid(vaddr, size))
+        output_->fatal(CALL_INFO, -1, "Memory read wraps the address space.\n");
     output_->verbose(CALL_INFO, 8, 0,
         "QuetzCore %" PRIu32 " READ  vaddr=0x%016" PRIx64 " size=%" PRIu32
         " path=%s\n",
         core_id_, vaddr, size,
         (path == IssuePath::MMIO) ? "mmio" : "cached");
 
-    if (path != IssuePath::MMIO)
+    if (path != IssuePath::MMIO && offset == 0)
         stats_.read_req_sizes->addData(size);
-
-    if (size == 0) return;
 
     StandardMem* link = linkFor(path);
     if (!link) {
@@ -82,18 +89,19 @@ void MemRequestEmitter::issueRead(uint64_t vaddr, uint32_t size, uint64_t ,
         pending_txns_[req->getID()] = { req, comp_->getCurrentSimTime(tc_), true };
         pending_count_++;
         stats_.mmio_read_reqs->addData(1);
+        offset = size;
         link->send(req);
-        return;
+        return 1;
     }
 
-    uint64_t addr      = vaddr;
-    uint32_t remaining = size;
+    uint64_t addr      = vaddr + offset;
+    uint32_t remaining = size - offset;
     uint32_t parts     = 0;
 
-    while (remaining > 0) {
-        uint64_t line_end = (addr & ~(cache_line_size_ - 1)) + cache_line_size_;
-        uint32_t chunk    = (uint32_t)std::min<uint64_t>(line_end - addr,
-                                                          (uint64_t)remaining);
+    while (remaining > 0 && parts < budget) {
+        uint32_t chunk = static_cast<uint32_t>(
+            memoryChunkSize(addr, remaining, cache_line_size_, remaining));
+        if (offset != 0) stats_.split_reads->addData(1);
 
         auto* req = new StandardMem::Read(addr, chunk, 0, addr);
         pending_txns_[req->getID()] = { req, comp_->getCurrentSimTime(tc_), false };
@@ -102,32 +110,39 @@ void MemRequestEmitter::issueRead(uint64_t vaddr, uint32_t size, uint64_t ,
         link->send(req);
 
         addr      += chunk;
+        offset    += chunk;
         remaining -= chunk;
         parts++;
     }
-
-    if (parts > 1)
-        stats_.split_reads->addData(parts - 1);
 
     if (check_addresses_ && size > (uint32_t)cache_line_size_)
         output_->verbose(CALL_INFO, 1, 0,
             "QuetzCore %" PRIu32 " READ vaddr=0x%016" PRIx64 " size=%" PRIu32
             " exceeds cache line size %" PRIu64 " (issued %" PRIu32 " sub-requests)\n",
             core_id_, vaddr, size, cache_line_size_, parts);
+    return parts;
 }
 
 void MemRequestEmitter::issueWrite(uint64_t vaddr, uint32_t size, uint64_t ,
                                    const uint8_t* raw_data, IssuePath path) {
+    uint32_t offset = 0;
+    issueWriteWindow(vaddr, size, 0, raw_data, path, offset, UINT32_MAX);
+}
+
+uint32_t MemRequestEmitter::issueWriteWindow(uint64_t vaddr, uint32_t size, uint64_t,
+                                            const uint8_t* raw_data, IssuePath path,
+                                            uint32_t& offset, uint32_t budget) {
+    if (size == 0 || budget == 0) return 0;
+    if (!memorySpanValid(vaddr, std::min<uint32_t>(size, sizeof(QuetzCommand::data))))
+        output_->fatal(CALL_INFO, -1, "Memory write wraps the address space.\n");
     output_->verbose(CALL_INFO, 8, 0,
         "QuetzCore %" PRIu32 " WRITE vaddr=0x%016" PRIx64 " size=%" PRIu32
         " path=%s\n",
         core_id_, vaddr, size,
         (path == IssuePath::MMIO) ? "mmio" : "cached");
 
-    if (path != IssuePath::MMIO)
+    if (path != IssuePath::MMIO && offset == 0)
         stats_.write_req_sizes->addData(size);
-
-    if (size == 0) return;
 
     StandardMem* link = linkFor(path);
     if (!link) {
@@ -160,8 +175,9 @@ void MemRequestEmitter::issueWrite(uint64_t vaddr, uint32_t size, uint64_t ,
         pending_txns_[req->getID()] = { req, comp_->getCurrentSimTime(tc_), true };
         pending_count_++;
         stats_.mmio_write_reqs->addData(1);
+        offset = size;
         link->send(req);
-        return;
+        return 1;
     }
 
     // The plugin can only carry kDataCap bytes of store payload in a
@@ -171,7 +187,7 @@ void MemRequestEmitter::issueWrite(uint64_t vaddr, uint32_t size, uint64_t ,
     // corrupt guest memory (and any balar packet staged in this range).
     uint32_t issue_size = size;
     if (size > kDataCap) {
-        stats_.cached_truncated_writes->addData(1);
+        if (offset == 0) stats_.cached_truncated_writes->addData(1);
         issue_size = kDataCap;
         output_->verbose(CALL_INFO, 1, 0,
             "QuetzCore %" PRIu32 " cached WRITE vaddr=0x%016" PRIx64 " size=%"
@@ -180,15 +196,15 @@ void MemRequestEmitter::issueWrite(uint64_t vaddr, uint32_t size, uint64_t ,
             core_id_, vaddr, size, kDataCap);
     }
 
-    uint64_t addr        = vaddr;
-    uint32_t remaining   = issue_size;
-    uint32_t data_offset = 0;
+    uint64_t addr        = vaddr + offset;
+    uint32_t remaining   = issue_size - offset;
+    uint32_t data_offset = offset;
     uint32_t parts       = 0;
 
-    while (remaining > 0) {
-        uint64_t line_end = (addr & ~(cache_line_size_ - 1)) + cache_line_size_;
-        uint32_t chunk    = (uint32_t)std::min<uint64_t>(line_end - addr,
-                                                          (uint64_t)remaining);
+    while (remaining > 0 && parts < budget) {
+        uint32_t chunk = static_cast<uint32_t>(
+            memoryChunkSize(addr, remaining, cache_line_size_, remaining));
+        if (offset != 0) stats_.split_writes->addData(1);
 
         std::vector<uint8_t> data(chunk, 0);
         if (raw_data && data_offset < kDataCap) {
@@ -205,18 +221,21 @@ void MemRequestEmitter::issueWrite(uint64_t vaddr, uint32_t size, uint64_t ,
 
         addr        += chunk;
         data_offset += chunk;
+        offset      += chunk;
         remaining   -= chunk;
         parts++;
     }
 
-    if (parts > 1)
-        stats_.split_writes->addData(parts - 1);
+    // Uncaptured bytes are deliberately omitted, but the original command is
+    // complete once every captured byte has been sent.
+    if (offset == issue_size) offset = size;
 
     if (check_addresses_ && size > (uint32_t)cache_line_size_)
         output_->verbose(CALL_INFO, 1, 0,
             "QuetzCore %" PRIu32 " WRITE vaddr=0x%016" PRIx64 " size=%" PRIu32
             " exceeds cache line size %" PRIu64 " (issued %" PRIu32 " sub-requests)\n",
             core_id_, vaddr, size, cache_line_size_, parts);
+    return parts;
 }
 
 bool MemRequestEmitter::handleResponse(StandardMem::Request* resp,

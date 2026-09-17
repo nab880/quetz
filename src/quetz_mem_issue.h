@@ -59,6 +59,15 @@ public:
                     const uint8_t* raw_data = nullptr,
                     IssuePath path = IssuePath::CACHED);
 
+    // Issue a prefix under the caller's transaction budget. offset is retained
+    // across ticks; returning the emitted count lets the pipeline honor both
+    // issue bandwidth and the outstanding-request limit for split accesses.
+    uint32_t issueReadWindow(uint64_t addr, uint32_t size, uint64_t pc,
+                             IssuePath path, uint32_t& offset, uint32_t budget);
+    uint32_t issueWriteWindow(uint64_t addr, uint32_t size, uint64_t pc,
+                              const uint8_t* data, IssuePath path,
+                              uint32_t& offset, uint32_t budget);
+
     bool handleResponse(SST::Interfaces::StandardMem::Request* resp,
                         uint64_t& latency_out, bool& was_read_out,
                         bool& was_mmio_out);

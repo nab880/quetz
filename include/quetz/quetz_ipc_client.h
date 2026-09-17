@@ -17,6 +17,8 @@ void quetz_ipc_cpu_reset(unsigned vcpu);
 unsigned quetz_ipc_native_region_count(QuetzIpcClient *client);
 int quetz_ipc_native_region(QuetzIpcClient *client, unsigned index, uint32_t *base, uint32_t *size);
 uint8_t *quetz_ipc_native_ram(QuetzIpcClient *client, uint32_t base, uint32_t size);
+/* Concurrent calls serialize per shared slot through response consumption.
+ * Attach/detach/reset still require startup/global-lock serialization. */
 uint64_t quetz_ipc_mmio_read(QuetzIpcClient *client, unsigned vcpu,
                              uint64_t addr, unsigned size);
 void quetz_ipc_mmio_write(QuetzIpcClient *client, unsigned vcpu,

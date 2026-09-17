@@ -55,6 +55,16 @@ public:
         delegate_->issue(op);
     }
 
+    uint32_t issueAvailable(const MemOp& op, uint32_t budget, bool& complete) override {
+        const uint32_t issued = delegate_->issueAvailable(op, budget, complete);
+        if (complete)
+            fprintf(stderr,
+                "[LoggingPipelineOutput] core=%" PRIu32 " %s addr=0x%016" PRIx64
+                " size=%" PRIu32 "\n",
+                core_id_, op.is_read ? "READ" : "WRITE", op.addr, op.size);
+        return issued;
+    }
+
     uint32_t pendingCount() const override {
         return delegate_->pendingCount();
     }

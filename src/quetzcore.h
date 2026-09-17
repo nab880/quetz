@@ -74,6 +74,7 @@ public:
     bool     isCoreHalted()  const;
     uint32_t pendingCount()  const;
     bool     isDrained()     const;
+    bool     sawGuestExit()  const { return pipeline_->sawGuestExit(); }
 
     void finishCore();
 

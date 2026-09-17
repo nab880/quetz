@@ -47,6 +47,17 @@ public:
             emitter_->issueWrite(op.addr, op.size, op.pc, op.data, path);
     }
 
+    uint32_t issueAvailable(const MemOp& op, uint32_t budget, bool& complete) override {
+        const IssuePath path = op.is_mmio ? IssuePath::MMIO : IssuePath::CACHED;
+        const uint32_t issued = op.is_read
+            ? emitter_->issueReadWindow(op.addr, op.size, op.pc, path, offset_, budget)
+            : emitter_->issueWriteWindow(op.addr, op.size, op.pc, op.data,
+                                         path, offset_, budget);
+        complete = offset_ == op.size;
+        if (complete) offset_ = 0;
+        return issued;
+    }
+
     uint32_t pendingCount() const override {
         return emitter_->pendingCount();
     }
@@ -68,4 +79,5 @@ public:
 
 private:
     MemRequestEmitter* emitter_;
+    uint32_t offset_ = 0;
 };

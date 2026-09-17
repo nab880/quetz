@@ -149,7 +149,7 @@ pid_t QemuLauncher::spawn(const QuetzConfig& cfg,
     } else if (mmio_size != 0 && !cfg.system_mode) {
         char range[256];
         snprintf(range, sizeof(range),
-            "shmname=%s,base=0x%" PRIx64 ",size=0x%" PRIx64 ",vcpu_id=0",
+            "shmname=%s,base=0x%" PRIx64 ",size=0x%" PRIx64,
             shmem_region_name.c_str(), mmio_base, mmio_size);
         argv_strs.push_back("-sst-mmio-range");
         argv_strs.push_back(range);
@@ -229,37 +229,64 @@ pid_t QemuLauncher::spawn(const QuetzConfig& cfg,
     _exit(127);
 }
 
-// Poll-reap `pid` for up to `timeout_ms`. Never blocks in waitpid(): even
-// after SIGKILL a child stuck in uninterruptible (D-state) I/O — e.g. wedged
-// on the shmem mapping — is not reaped until it leaves the kernel, so an
-// unconditional blocking waitpid() could hang the caller forever.
-static bool reapBounded(pid_t pid, int timeout_ms) {
+// Preserve the child's status both during simulation and during teardown.
+// A plugin EXIT marker does not imply QEMU itself exited successfully.
+bool QemuLauncher::checkChild() {
+    if (pid_ == 0) return false;
+    int status = 0;
+    const pid_t child = waitpid(pid_, &status, WNOHANG);
+    if (child == 0 || (child < 0 && errno == EINTR)) return true;
+    if (child < 0)
+        output_->fatal(CALL_INFO, -1, "Cannot inspect QEMU child: %s.\n", strerror(errno));
+    pid_ = 0; // clear before fatal/emergency shutdown can try to kill it again
+    if (WIFEXITED(status) && WEXITSTATUS(status) != 0)
+        output_->fatal(CALL_INFO, -1, "QEMU exited with status %d.\n", WEXITSTATUS(status));
+    if (WIFSIGNALED(status))
+        output_->fatal(CALL_INFO, -1, "QEMU was terminated by signal %d.\n", WTERMSIG(status));
+    return false;
+}
+
+// Never block in waitpid, even after SIGKILL: D-state I/O can delay reaping.
+static bool reapBounded(pid_t pid, int timeout_ms, int* status_out = nullptr) {
     const int poll_ms = 10;
     for (int waited = 0;; waited += poll_ms) {
-        int pstat;
-        pid_t rc = waitpid(pid, &pstat, WNOHANG);
-        if (rc == pid || (rc < 0 && errno == ECHILD))
+        int status = 0;
+        const pid_t rc = waitpid(pid, &status, WNOHANG);
+        if (rc == pid) {
+            if (status_out) *status_out = status;
             return true;
-        if (waited >= timeout_ms)
-            return false;
+        }
+        if (rc < 0 && errno == ECHILD) return true;
+        if (waited >= timeout_ms) return false;
         usleep(poll_ms * 1000);
     }
 }
 
-void QemuLauncher::terminate() {
-    if (pid_ == 0)
+void QemuLauncher::terminate(bool expect_guest_exit) {
+    if (!checkChild()) return;
+    int status = 0;
+    if (expect_guest_exit) {
+        // EXIT comes from QEMU's plugin exit callback. Let that process return
+        // its real status; killing it here races a nonzero guest exit into an
+        // apparently successful simulator-requested SIGTERM.
+        if (!reapBounded(pid_, 2000, &status))
+            output_->fatal(CALL_INFO, -1, "QEMU did not exit after its plugin EXIT records.\n");
+        pid_ = 0;
+        if (!WIFEXITED(status) || WEXITSTATUS(status) != 0)
+            output_->fatal(CALL_INFO, -1, "QEMU failed after plugin EXIT (wait status %d).\n", status);
         return;
+    }
     kill(pid_, SIGTERM);
     // Reap the child so it does not linger as a zombie for the rest of the
     // SST process lifetime. Give SIGTERM a bounded grace window, then
     // escalate to SIGKILL (which cannot be ignored) and reap for real.
     const int grace_ms = 2000;
-    if (!reapBounded(pid_, grace_ms)) {
+    if (!reapBounded(pid_, grace_ms, &status)) {
         output_->verbose(CALL_INFO, 1, 0,
             "QEMU (pid %d) did not exit within %d ms of SIGTERM; sending SIGKILL.\n",
             (int)pid_, grace_ms);
         kill(pid_, SIGKILL);
-        if (!reapBounded(pid_, grace_ms)) {
+        if (!reapBounded(pid_, grace_ms, &status)) {
             output_->verbose(CALL_INFO, 1, 0,
                 "QEMU (pid %d) not reaped within %d ms of SIGKILL (stuck in "
                 "uninterruptible I/O?); leaving it for process exit.\n",
@@ -267,6 +294,12 @@ void QemuLauncher::terminate() {
         }
     }
     pid_ = 0;
+    if (WIFEXITED(status) && WEXITSTATUS(status) != 0)
+        output_->fatal(CALL_INFO, -1, "QEMU exited with status %d during teardown.\n",
+                       WEXITSTATUS(status));
+    if (WIFSIGNALED(status) && WTERMSIG(status) != SIGTERM && WTERMSIG(status) != SIGKILL)
+        output_->fatal(CALL_INFO, -1, "QEMU failed with signal %d during teardown.\n",
+                       WTERMSIG(status));
 }
 
 void QemuLauncher::forceKill() {

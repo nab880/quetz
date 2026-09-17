@@ -279,7 +279,9 @@ void QuetzCPU::finish() {
     for (uint32_t i = 0; i < cfg_.vcpu_count; i++)
         cores_[i]->finishCore();
 
-    frontend_->terminate();
+    bool guest_exit = true;
+    for (auto* core : cores_) guest_exit = guest_exit && core->sawGuestExit();
+    frontend_->terminate(guest_exit);
 }
 
 void QuetzCPU::emergencyShutdown() {
@@ -316,8 +318,21 @@ bool QuetzCPU::tick(SST::Cycle_t ) {
     for (auto* p : accel_ports_)
         p->process();
 
-    if (halted_count_ < cfg_.vcpu_count)
+    // Poll periodically instead of making a process syscall on every cycle.
+    // Keep draining buffered trace after a successful exit, but reject a child
+    // that vanished without sending the expected per-core EXIT records.
+    if ((++child_poll_ticks_ & 1023u) == 0 || halted_count_ == cfg_.vcpu_count)
+        child_running_ = frontend_->checkChild();
+    if (halted_count_ < cfg_.vcpu_count) {
+        if (!child_running_) {
+            bool drained = true;
+            for (uint32_t i = 0; i < cfg_.vcpu_count; ++i)
+                drained = drained && cores_[i]->isDrained();
+            if (drained)
+                output_->fatal(CALL_INFO, -1, "QEMU exited before all vCPU EXIT records arrived.\n");
+        }
         return false;
+    }
 
     for (uint32_t i = 0; i < cfg_.vcpu_count; i++)
         if (cores_[i]->pendingCount() > 0) return false;

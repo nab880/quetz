@@ -52,10 +52,15 @@ if(BUILD_TESTING)
       target_sources(${name} PRIVATE src/quetz_platform_profiles.cc)
     elseif(name STREQUAL "test_ipc_client")
       target_sources(${name} PRIVATE qemu-overlay/quetz_ipc_client.c)
+      find_package(Threads REQUIRED)
+      target_link_libraries(${name} PRIVATE Threads::Threads)
     elseif(name STREQUAL "test_ipc_layout")
       target_sources(${name} PRIVATE tests/unit/ipc_layout_c.c)
     endif()
     add_test(NAME ${name} COMMAND ${name})
+    if(name STREQUAL "test_ipc_client")
+      set_tests_properties(${name} PROPERTIES TIMEOUT 30)
+    endif()
   endforeach()
   find_package(Python3 COMPONENTS Interpreter)
   if(Python3_FOUND)
@@ -64,6 +69,30 @@ if(BUILD_TESTING)
       add_test(NAME invalid_configuration COMMAND "${Python3_EXECUTABLE}"
           "${CMAKE_CURRENT_SOURCE_DIR}/tests/runtime/check_invalid_configuration.py"
           --sst "${SST_ROOT}/bin/sst" --library-dir "$<TARGET_FILE_DIR:quetz>")
+      find_program(QUETZ_TEST_M68K_CC m68k-linux-gnu-gcc)
+      find_program(QUETZ_TEST_M68K_QEMU qemu-system-m68k HINTS /opt/qemu/bin)
+      if(QUETZ_TEST_M68K_CC AND QUETZ_TEST_M68K_QEMU)
+        add_test(NAME pipeline_runtime COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/runtime/check_pipeline_runtime.py"
+            --sst "${SST_ROOT}/bin/sst" --library-dir "$<TARGET_FILE_DIR:quetz>"
+            --plugin "$<TARGET_FILE:qemu_sst_plugin>"
+            --qemu "${QUETZ_TEST_M68K_QEMU}" --cc "${QUETZ_TEST_M68K_CC}")
+        set_tests_properties(pipeline_runtime PROPERTIES TIMEOUT 70)
+      endif()
+    endif()
+    get_filename_component(QUETZ_QEMU_PREFIX "${QEMU_PLUGIN_INCLUDE_DIR}" DIRECTORY)
+    find_program(QUETZ_M68K_USER_CC m68k-linux-gnu-gcc)
+    find_program(QUETZ_RISCV_USER_CC riscv64-linux-gnu-gcc)
+    if(QUETZ_BUILD_RUNTIME AND CMAKE_SYSTEM_NAME STREQUAL "Linux"
+        AND EXISTS "${SST_ROOT}/include/sst/core/interprocess/tunneldef.h"
+        AND EXISTS "${QUETZ_QEMU_PREFIX}/bin/qemu-m68k"
+        AND EXISTS "${QUETZ_QEMU_PREFIX}/bin/qemu-riscv64"
+        AND QUETZ_M68K_USER_CC AND QUETZ_RISCV_USER_CC)
+      add_test(NAME usermode_mmio_runtime COMMAND "${CMAKE_COMMAND}" -E env
+          "QEMU_PREFIX=${QUETZ_QEMU_PREFIX}" "SST_HOME=${SST_ROOT}"
+          "M68K_CC=${QUETZ_M68K_USER_CC}" "RV64_CC=${QUETZ_RISCV_USER_CC}"
+          bash "${CMAKE_CURRENT_SOURCE_DIR}/tests/usermode/run_mmio_regressions.sh")
+      set_tests_properties(usermode_mmio_runtime PROPERTIES TIMEOUT 60)
     endif()
     add_test(NAME runtime_runner COMMAND "${Python3_EXECUTABLE}" -m unittest discover -s "${CMAKE_CURRENT_SOURCE_DIR}/tests/runtime" -p "test_*.py")
   endif()

@@ -1,6 +1,7 @@
 /* Standalone Quetz IPC client for patched QEMU (C, no SST dependency). */
 #include "quetz/quetz_ipc_client.h"
 #include "quetz/quetz_ipc_types.h"
+#include "quetz/quetz_ipc_lock.h"
 
 #include <fcntl.h>
 #include <linux/futex.h>
@@ -199,7 +200,7 @@ void quetz_ipc_detach(QuetzIpcClient *client)
 
 static void clear_slot(QuetzSharedData *sd, unsigned vcpu)
 {
-    sd->mmio_slot[vcpu].ready = 0;
+    __atomic_store_n(&sd->mmio_slot[vcpu].ready, 0u, __ATOMIC_RELAXED);
     sd->mmio_slot[vcpu].value = 0;
 }
 
@@ -227,42 +228,44 @@ static void wait_slot(QuetzSharedData *sd, unsigned vcpu, uint64_t *out)
 uint64_t quetz_ipc_mmio_read(QuetzIpcClient *client, unsigned vcpu,
                              uint64_t addr, unsigned size)
 {
-    QuetzSharedData *sd = client->shared;
-    if (!sd || vcpu >= QUETZ_MAX_MMIO_VCORES)
+    QuetzSharedData *sd = client ? client->shared : NULL;
+    if (!sd || vcpu >= sd->numCores || vcpu >= QUETZ_MAX_MMIO_VCORES)
         return 0;
 
-    clear_slot(sd, vcpu);
     QuetzMmioSyncRequest *req = &sd->mmio_req[vcpu];
+    quetz_ipc_lock(&req->busy);
+    clear_slot(sd, vcpu);
     req->addr = addr;
     req->size = size;
     req->write_val = 0;
     req->cmd = QUETZ_CMD_MMIO_READ_REQ;
-    __sync_synchronize();
-    req->pending = 1;
+    __atomic_store_n(&req->pending, 1u, __ATOMIC_RELEASE);
 
     uint64_t value = 0;
     wait_slot(sd, vcpu, &value);
+    quetz_ipc_unlock(&req->busy);
     return value;
 }
 
 void quetz_ipc_mmio_write(QuetzIpcClient *client, unsigned vcpu,
                           uint64_t addr, unsigned size, uint64_t value)
 {
-    QuetzSharedData *sd = client->shared;
-    if (!sd || vcpu >= QUETZ_MAX_MMIO_VCORES)
+    QuetzSharedData *sd = client ? client->shared : NULL;
+    if (!sd || vcpu >= sd->numCores || vcpu >= QUETZ_MAX_MMIO_VCORES)
         return;
 
-    clear_slot(sd, vcpu);
     QuetzMmioSyncRequest *req = &sd->mmio_req[vcpu];
+    quetz_ipc_lock(&req->busy);
+    clear_slot(sd, vcpu);
     req->addr = addr;
     req->size = size;
     req->write_val = value;
     req->cmd = QUETZ_CMD_MMIO_WRITE_REQ;
-    __sync_synchronize();
-    req->pending = 1;
+    __atomic_store_n(&req->pending, 1u, __ATOMIC_RELEASE);
 
     uint64_t ack = 0;
     wait_slot(sd, vcpu, &ack);
+    quetz_ipc_unlock(&req->busy);
 }
 
 unsigned quetz_ipc_irq_drain(QuetzIpcClient *client, unsigned max_lines,

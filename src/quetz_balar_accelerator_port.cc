@@ -180,22 +180,13 @@ void BalarAcceleratorPort::handleAsyncAperture(uint32_t vcpu,
         auto* doorbell = new StandardMem::Write(
             doorbell_addr_, db_size, accelU64ToData(scratch, db_size));
 
-        if (!async_busy_[vcpu]) {
-            // Head of the queue: arm-and-defer exactly like the synchronous
-            // doorbell. The guest stays blocked on this MMIO write through the
-            // (short) drain+flush+forward — so the kernel is running in balar
-            // before the guest is acked and proceeds, giving real overlap.
-            async_busy_[vcpu] = true;
-            armed_doorbells_[vcpu] = { doorbell, true, false };
-        } else {
-            // Another posted op is in process; balar serves one blocking op at a
-            // time. Queue this one and ack the guest now — it was staged before
-            // SUBMIT, so the deferred flush (issued when this op reaches the head)
-            // still captures committed bytes. Buffer-lifetime rule: the guest
-            // must keep this op's packet alive until it completes.
-            submit_queue_[vcpu].push_back(doorbell);
-            host_->postResponse(vcpu, 0);
-        }
+        // Every submit drains and flushes its packet while the guest is
+        // blocked, including queued submits. If queued submits were acked now
+        // and drained only after the preceding operation finished, continued
+        // CPU traffic could keep that later drain from ever completing.
+        if (armed_doorbells_.count(vcpu) || doorbell_flushes_.count(vcpu))
+            out_.fatal(CALL_INFO, -1, "Nested async SUBMIT before its acknowledgement.\n");
+        armed_doorbells_[vcpu] = { doorbell, true, false };
         out_.verbose(CALL_INFO, 1, 0,
             "vCPU %" PRIu32 ": async SUBMIT ticket=%" PRIu64
             " scratch=0x%016" PRIx64 " in_flight=%" PRIu32 " queued=%zu\n",
@@ -298,6 +289,15 @@ void BalarAcceleratorPort::forwardDoorbell(uint32_t vcpu,
                                            StandardMem::Write* req,
                                            bool is_async, bool pre_acked)
 {
+    if (is_async && async_busy_[vcpu]) {
+        // The packet is already drained and flushed. Preserve it until the
+        // operation ahead of it retires; dispatch must not depend on future
+        // CPU activity (or on a CPU which has already halted).
+        submit_queue_[vcpu].push_back(req);
+        if (!pre_acked) host_->postResponse(vcpu, 0);
+        return;
+    }
+    if (is_async) async_busy_[vcpu] = true;
     pending_[req->getID()] = { vcpu, false, is_async };
     host_->sendMmio(vcpu, req);
     host_->recordSyncRequest(vcpu, false);
@@ -388,15 +388,13 @@ bool BalarAcceleratorPort::handleResponse(uint32_t vcpu_hint,
             "vCPU %" PRIu32 ": async offload completed, completed_id=%" PRIu64
             " in_flight=%" PRIu32 "\n", vcpu, completed_id_[vcpu], async_in_flight_);
 
-        // Start the next queued op (FIFO). It was acked at submit; arm-and-defer
-        // it now — its packet committed before its submit, so the deferred flush
-        // (once the vCPU next drains) captures the right bytes.
+        // Queued packets were drained/flushed before their submit ACK. They
+        // can dispatch immediately, even after the submitting CPU has halted.
         auto qit = submit_queue_.find(vcpu);
         if (qit != submit_queue_.end() && !qit->second.empty()) {
             StandardMem::Write* next = qit->second.front();
             qit->second.pop_front();
-            async_busy_[vcpu] = true;
-            armed_doorbells_[vcpu] = { next, true, true };
+            forwardDoorbell(vcpu, next, true, true);
         }
     } else {
         host_->postResponse(vcpu, value);

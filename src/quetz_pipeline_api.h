@@ -136,6 +136,16 @@ public:
 
     virtual uint32_t slotsNeeded(const MemOp& op) const = 0;
     virtual void     issue(const MemOp& op) = 0;
+    // Emit at most budget memory transactions. Stages that split an access
+    // retain its cursor until complete; the pipeline keeps the original event
+    // at its head and does not run filters/transforms a second time.
+    virtual uint32_t issueAvailable(const MemOp& op, uint32_t budget, bool& complete) {
+        const uint32_t slots = slotsNeeded(op);
+        complete = slots <= budget;
+        if (!complete) return 0;
+        issue(op);
+        return slots;
+    }
     virtual uint32_t pendingCount() const = 0;
 
     virtual void setMemLink(SST::Interfaces::StandardMem* link) = 0;

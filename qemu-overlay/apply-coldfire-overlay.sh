@@ -3,7 +3,7 @@ set -eu
 QEMU_SRC="${1:-.}"
 OVERLAY="$(cd "$(dirname "$0")" && pwd)"
 [ -d "$QEMU_SRC/hw/misc" ] || { echo "Not a QEMU source tree: $QEMU_SRC" >&2; exit 1; }
-[ "$(cat "$QEMU_SRC/.quetz-generic-overlay" 2>/dev/null || true)" = quetz-generic-v5 ] || {
+[ "$(cat "$QEMU_SRC/.quetz-generic-overlay" 2>/dev/null || true)" = quetz-generic-v6 ] || {
     echo "Apply the matching generic Quetz overlay first" >&2; exit 1;
 }
 cp "$OVERLAY/../include/quetz/quetz_coldfire_cache.h" "$QEMU_SRC/include/quetz/"

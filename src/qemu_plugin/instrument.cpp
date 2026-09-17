@@ -11,6 +11,7 @@
 #include "insn_classifier.h"
 #include "mem_access_handler.h"
 #include "plugin_state.h"
+#include "quetz/quetz_ipc_lock.h"
 
 #include <cstdint>
 #include <cstring>
@@ -100,6 +101,7 @@ static void cb_cache_op(unsigned vi, void* userdata)
         cache_op_fatal("invalid shared-memory cache mailbox");
     auto* req = &shared->mmio_req[vi];
     auto* slot = &shared->mmio_slot[vi];
+    quetz_ipc_lock(&req->busy);
     if (__atomic_load_n(&req->pending, __ATOMIC_ACQUIRE) != 0 ||
         __atomic_load_n(&slot->ready, __ATOMIC_ACQUIRE) != 0)
         cache_op_fatal("synchronous cache mailbox already in use");
@@ -119,6 +121,7 @@ static void cb_cache_op(unsigned vi, void* userdata)
 #endif
     }
     __atomic_store_n(&slot->ready, 0u, __ATOMIC_RELEASE);
+    quetz_ipc_unlock(&req->busy);
 }
 
 static void instrument_cache_op(qemu_plugin_insn* insn)

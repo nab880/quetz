@@ -19,40 +19,91 @@
 #include "user-mmap.h"
 #include "sst_mmio.h"
 #include "quetz/quetz_ipc_client.h"
+#include "quetz/quetz_ipc_types.h"
 
 #include <sys/mman.h>
 
 #define MAX_RANGES 8
 static struct SstMmioRange ranges[MAX_RANGES];
 static int range_count;
-static QuetzIpcClient *ipc_client;
+/* Registration/attachment occurs before guest threads are started. */
+static G_NORETURN void invalid_range(const char *reason)
+{
+    fprintf(stderr, "quetz: invalid MMIO aperture: %s\n", reason);
+    exit(EXIT_FAILURE);
+}
+
+static uint64_t range_number(const char *value)
+{
+    char *end;
+    if (!*value || *value == '-') {
+        invalid_range("expected an unsigned number");
+    }
+    errno = 0;
+    uint64_t n = strtoull(value, &end, 0);
+    if (errno || *end) {
+        invalid_range("invalid numeric field");
+    }
+    return n;
+}
 
 void sst_mmio_register_range(const char *spec)
 {
     if (range_count >= MAX_RANGES || !spec) {
-        return;
+        invalid_range("too many ranges or missing specification");
     }
-    struct SstMmioRange *r = &ranges[range_count++];
+    struct SstMmioRange *r = &ranges[range_count];
     memset(r, 0, sizeof(*r));
-    r->vcpu_id = 0;
     char *copy = g_strdup(spec);
     char *save = NULL;
     for (char *tok = strtok_r(copy, ",", &save); tok;
          tok = strtok_r(NULL, ",", &save)) {
         if (strncmp(tok, "shmname=", 8) == 0) {
+            if (strlen(tok + 8) >= sizeof(r->shmname)) {
+                invalid_range("shared-memory name too long");
+            }
             g_strlcpy(r->shmname, tok + 8, sizeof(r->shmname));
         } else if (strncmp(tok, "base=", 5) == 0) {
-            r->base = strtoull(tok + 5, NULL, 0);
+            r->base = range_number(tok + 5);
         } else if (strncmp(tok, "size=", 5) == 0) {
-            r->size = strtoull(tok + 5, NULL, 0);
+            r->size = range_number(tok + 5);
         } else if (strncmp(tok, "vcpu_id=", 8) == 0) {
-            r->vcpu_id = (unsigned)strtoul(tok + 8, NULL, 0);
+            uint64_t vcpu = range_number(tok + 8);
+            if (vcpu > UINT_MAX) {
+                invalid_range("vCPU index out of range");
+            }
+            r->vcpu_id = vcpu;
+        } else {
+            invalid_range("unknown field");
         }
     }
     g_free(copy);
-    if (!ipc_client && r->shmname[0]) {
-        ipc_client = quetz_ipc_attach(r->shmname);
+    if (!r->shmname[0] || !r->size ||
+        r->base > (abi_ulong)-1 || r->size > (abi_ulong)-1 ||
+        r->size - 1 > (abi_ulong)-1 - r->base) {
+        invalid_range("missing name, empty size, or address overflow");
     }
+    for (int i = 0; i < range_count; ++i) {
+        const struct SstMmioRange *old = &ranges[i];
+        if ((r->base >= old->base && r->base - old->base < old->size) ||
+            (old->base >= r->base && old->base - r->base < r->size)) {
+            invalid_range("overlapping ranges");
+        }
+        if (strcmp(old->shmname, r->shmname) == 0) {
+            r->client = old->client;
+        }
+    }
+    if (!r->client) {
+        r->client = quetz_ipc_attach(r->shmname);
+    }
+    if (r->vcpu_id != 0) {
+        invalid_range("user-mode mailboxes use CPU indices; vcpu_id must be zero");
+    }
+    if (!r->client || !quetz_ipc_vcpu_count(r->client) ||
+        quetz_ipc_vcpu_count(r->client) > QUETZ_MAX_MMIO_VCORES) {
+        invalid_range("cannot attach shared memory or invalid vCPU index");
+    }
+    ++range_count;
 }
 
 /*
@@ -72,9 +123,7 @@ void sst_mmio_apply_reservation(void)
                                   MAP_ANONYMOUS | MAP_PRIVATE | MAP_FIXED,
                                   -1, 0);
         if (rv == -1) {
-            fprintf(stderr,
-                    "quetz: failed to reserve MMIO aperture 0x%" PRIx64
-                    "+0x%" PRIx64 "\n", ranges[i].base, ranges[i].size);
+            invalid_range("failed to reserve guest address space");
         }
     }
 }
@@ -83,7 +132,7 @@ static const struct SstMmioRange *find_range(uint64_t addr)
 {
     for (int i = 0; i < range_count; i++) {
         if (addr >= ranges[i].base &&
-            addr < ranges[i].base + ranges[i].size) {
+            addr - ranges[i].base < ranges[i].size) {
             return &ranges[i];
         }
     }
@@ -151,102 +200,19 @@ static int decode_ldst(uint32_t insn, int *is_store, unsigned *size,
 }
 
 #elif defined(TARGET_M68K)
-/* Extension-word bytes that follow the MOVE opcode word for a memory EA. */
-static int m68k_ea_extlen(unsigned mode, unsigned reg)
-{
-    switch (mode) {
-    case 2: return 0;                   /* (An)                      */
-    /* (An)+ / -(An) also carry no extension words, but servicing them means
-     * writing the incremented/decremented An back — which the fault handler
-     * does not do (it only advances PC). Rejecting here makes such an access
-     * fall through to the normal SEGV path instead of silently corrupting An. */
-    case 3: case 4: return -1;          /* (An)+, -(An): unsupported */
-    case 5: return 2;                   /* (d16,An)                  */
-    case 6: return 2;                   /* (d8,An,Xn) brief ext      */
-    case 7:
-        switch (reg) {
-        case 0: return 2;               /* (xxx).W                   */
-        case 1: return 4;               /* (xxx).L                   */
-        case 2: return 2;               /* (d16,PC)                  */
-        case 3: return 2;               /* (d8,PC,Xn)                */
-        default: return -1;
-        }
-    default: return -1;                 /* 0=Dn, 1=An: not memory    */
-    }
-}
-
-/*
- * Decode an m68k MOVE.B/W/L whose memory operand is the faulting aperture
- * access (what the compiler emits for `*(volatile T *)mmio`). The other operand
- * is a data register (load or store) or an immediate (store of a constant, e.g.
- * `move.l #&scratch,(a0)`). Big-endian; `op` is the opcode word. Returns total
- * instruction length, sets *dreg (>=0 register, or -1 = immediate source whose
- * value the caller reads from guest_pc+2). Returns 0 if not a handled form.
- */
-static int decode_ldst(uint16_t op, int *is_store, unsigned *size, int *dreg)
-{
-    if ((op & 0xC000) != 0x0000) {
-        return 0; /* not the MOVE family (bits[15:14] != 00) */
-    }
-    unsigned imm_bytes;
-    switch ((op >> 12) & 0x3) {         /* MOVE size: 01=B, 11=W, 10=L */
-    case 1: *size = 1; imm_bytes = 2; break;   /* immediate .B occupies a word */
-    case 3: *size = 2; imm_bytes = 2; break;
-    case 2: *size = 4; imm_bytes = 4; break;
-    default: return 0;
-    }
-    unsigned dst_reg  = (op >> 9) & 0x7;
-    unsigned dst_mode = (op >> 6) & 0x7;
-    unsigned src_mode = (op >> 3) & 0x7;
-    unsigned src_reg  = op & 0x7;
-    int dst_is_mem = (dst_mode != 0 && dst_mode != 1);
-
-    /* The data operand is a data register (Dn, mode 0) or an address register
-     * (An, mode 1; MOVEA / move from An). *dreg encodes it: 0-7 = Dn,
-     * 8-15 = An, -1 = immediate source. */
-    if ((src_mode == 0 || src_mode == 1) && dst_is_mem) {
-        int ext = m68k_ea_extlen(dst_mode, dst_reg);   /* reg -> memory */
-        if (ext < 0) {
-            return 0;
-        }
-        *is_store = 1;
-        *dreg = (src_mode == 1) ? (int)(8 + src_reg) : (int)src_reg;
-        return 2 + ext;
-    }
-    if (src_mode == 7 && src_reg == 4 && dst_is_mem) {
-        int ext = m68k_ea_extlen(dst_mode, dst_reg);   /* #imm -> memory */
-        if (ext < 0) {
-            return 0;
-        }
-        /* source immediate precedes the destination EA extension words */
-        *is_store = 1; *dreg = -1; return 2 + (int)imm_bytes + ext;
-    }
-    if (dst_mode == 0 || dst_mode == 1) {
-        int ext = m68k_ea_extlen(src_mode, src_reg);   /* memory -> reg */
-        if (ext < 0) {
-            return 0;
-        }
-        *is_store = 0;
-        *dreg = (dst_mode == 1) ? (int)(8 + dst_reg) : (int)dst_reg;
-        return 2 + ext;
-    }
-    return 0;
-}
+#include "sst_mmio_m68k.h"
 #endif
 
 /*
- * Unblock SIGSEGV/SIGBUS (the kernel blocked them on handler entry) and resume
+ * Restore the pre-fault signal mask and resume
  * the guest. We leave via cpu_loop_exit (siglongjmp), which skips the kernel's
  * sigreturn that would otherwise restore the mask — without this the next
- * aperture fault wedges the process. Does not return.
+ * aperture fault wedges the process. Preserve every originally blocked signal.
+ * Does not return.
  */
-static G_NORETURN void sst_mmio_resume(CPUState *cpu)
+static G_NORETURN void sst_mmio_resume(CPUState *cpu, const sigset_t *signal_mask)
 {
-    sigset_t set;
-    sigemptyset(&set);
-    sigaddset(&set, SIGSEGV);
-    sigaddset(&set, SIGBUS);
-    sigprocmask(SIG_UNBLOCK, &set, NULL);
+    sigprocmask(SIG_SETMASK, signal_mask, NULL);
     cpu_loop_exit(cpu);
 }
 
@@ -256,15 +222,25 @@ static G_NORETURN void sst_mmio_resume(CPUState *cpu)
  * PC and resume via cpu_loop_exit (does not return). Otherwise returns so the
  * normal SEGV path runs.
  */
-void sst_mmio_handle_fault(CPUState *cpu, abi_ptr guest_addr, uintptr_t host_pc)
+void sst_mmio_handle_fault(CPUState *cpu, abi_ptr guest_addr, uintptr_t host_pc,
+                           bool is_write, const sigset_t *signal_mask)
 {
     const struct SstMmioRange *r = find_range(guest_addr);
-    if (!r || !ipc_client) {
+    if (!r) {
         return;
     }
 
+    /* QEMU plugins use exactly CPUState.cpu_index for this guest thread.
+     * Preserve that identity for per-core draining/coherence on the SST side. */
+    const unsigned vcpu = cpu->cpu_index;
+    if (vcpu >= quetz_ipc_vcpu_count(r->client)) {
+        return; /* no mailbox for this guest thread: deliver the guest fault */
+    }
+
     /* Recover guest CPU state (env->pc) at the faulting instruction. */
-    cpu_restore_state(cpu, host_pc);
+    if (!cpu_restore_state(cpu, host_pc)) {
+        return;
+    }
 
 #if defined(TARGET_RISCV64)
     CPURISCVState *env = cpu_env(cpu);
@@ -277,15 +253,15 @@ void sst_mmio_handle_fault(CPUState *cpu, abi_ptr guest_addr, uintptr_t host_pc)
     int is_store = 0, rd = 0, rs2 = 0, len, is_signed = 0;
     unsigned size = 0;
     len = decode_ldst(insn, &is_store, &size, &rd, &rs2, &is_signed);
-    if (!len) {
+    if (!len || is_store != is_write || size > r->size - (guest_addr - r->base)) {
         return;
     }
 
     if (is_store) {
         uint64_t val = env->gpr[rs2];
-        quetz_ipc_mmio_write(ipc_client, r->vcpu_id, guest_addr, size, val);
+        quetz_ipc_mmio_write(r->client, vcpu, guest_addr, size, val);
     } else {
-        uint64_t val = quetz_ipc_mmio_read(ipc_client, r->vcpu_id,
+        uint64_t val = quetz_ipc_mmio_read(r->client, vcpu,
                                            guest_addr, size);
         if (size < 8) {
             /* The device returns the low `size` bytes; widen to the 64-bit GPR
@@ -299,7 +275,7 @@ void sst_mmio_handle_fault(CPUState *cpu, abi_ptr guest_addr, uintptr_t host_pc)
         }
     }
     env->pc = guest_pc + len;
-    sst_mmio_resume(cpu); /* does not return */
+    sst_mmio_resume(cpu, signal_mask); /* does not return */
 
 #elif defined(TARGET_M68K)
     CPUM68KState *env = cpu_env(cpu);
@@ -310,12 +286,19 @@ void sst_mmio_handle_fault(CPUState *cpu, abi_ptr guest_addr, uintptr_t host_pc)
         return;
     }
     int is_store = 0, dreg = 0, len;
-    unsigned size = 0;
-    len = decode_ldst(op, &is_store, &size, &dreg);
-    if (!len) {
+    unsigned size = 0, index_offset = 0;
+    len = m68k_mmio_decode(op, &is_store, &size, &dreg, &index_offset);
+    if (!len || is_store != is_write || size > r->size - (guest_addr - r->base)) {
         return;
     }
 
+    if (index_offset) {
+        uint16_t ext;
+        if (get_user_u16(ext, guest_pc + index_offset) != 0 || (ext & 0x0100)) {
+            return; /* full indexed EA has variable length; only brief supported */
+        }
+    }
+    uint32_t moved;
     uint32_t mask = (size >= 4) ? 0xFFFFFFFFu : ((1u << (size * 8)) - 1u);
     if (is_store) {
         uint32_t raw;
@@ -337,10 +320,12 @@ void sst_mmio_handle_fault(CPUState *cpu, abi_ptr guest_addr, uintptr_t host_pc)
         } else {
             raw = env->aregs[dreg - 8];
         }
-        quetz_ipc_mmio_write(ipc_client, r->vcpu_id, guest_addr, size, raw & mask);
+        moved = raw & mask;
+        quetz_ipc_mmio_write(r->client, vcpu, guest_addr, size, moved);
     } else {
-        uint64_t val = quetz_ipc_mmio_read(ipc_client, r->vcpu_id,
+        uint64_t val = quetz_ipc_mmio_read(r->client, vcpu,
                                            guest_addr, size);
+        moved = (uint32_t)val & mask;
         if (dreg < 8) {
             env->dregs[dreg] = (env->dregs[dreg] & ~mask) | ((uint32_t)val & mask);
         } else {
@@ -349,8 +334,11 @@ void sst_mmio_handle_fault(CPUState *cpu, abi_ptr guest_addr, uintptr_t host_pc)
                 ? (uint32_t)(int32_t)(int16_t)val : (uint32_t)val;
         }
     }
+    if (is_store || dreg < 8) {
+        cpu_m68k_set_ccr(env, m68k_mmio_move_ccr(moved, size, env->cc_x << 4));
+    }
     env->pc = guest_pc + len;
-    sst_mmio_resume(cpu); /* does not return */
+    sst_mmio_resume(cpu, signal_mask); /* does not return */
 
 #else
     (void)host_pc;

@@ -8,6 +8,7 @@ cp "$OVERLAY/quetz_ipc_client.c" "$QEMU_SRC/hw/misc/"
 mkdir -p "$QEMU_SRC/include/quetz"
 cp "$OVERLAY/../include/quetz/quetz_ipc_types.h" "$QEMU_SRC/include/quetz/"
 cp "$OVERLAY/../include/quetz/quetz_ipc_client.h" "$QEMU_SRC/include/quetz/"
+cp "$OVERLAY/../include/quetz/quetz_ipc_lock.h" "$QEMU_SRC/include/quetz/"
 # Append softmmu source registrations to hw/misc/meson.build.
 HW_MESON="$QEMU_SRC/hw/misc/meson.build"
 if ! grep -q sst_mmio_bridge.c "$HW_MESON"; then
@@ -26,6 +27,7 @@ fi
 if [ -d "$QEMU_SRC/linux-user" ]; then
     cp "$OVERLAY/linux-user/sst_mmio.c" "$QEMU_SRC/linux-user/sst_mmio.c"
     cp "$OVERLAY/linux-user/sst_mmio.h" "$QEMU_SRC/linux-user/sst_mmio.h"
+    cp "$OVERLAY/linux-user/sst_mmio_m68k.h" "$QEMU_SRC/linux-user/sst_mmio_m68k.h"
 
     QEMU_SRC="$QEMU_SRC" python3 - <<'PY'
 import os
@@ -68,6 +70,16 @@ patch("linux-user/main.c", [
      "    sst_mmio_apply_reservation();\n", False),
 ])
 
+# Upgrade the earlier three-argument signal hook before the idempotent patch.
+p = os.path.join(src, "linux-user/signal.c")
+s = open(p).read()
+s = s.replace("    sst_mmio_handle_fault(cpu, guest_addr, pc);\n",
+    "    if (is_valid && access_type != MMU_INST_FETCH &&\n"
+    "        in_code_gen_buffer((void *)(pc - tcg_splitwx_diff))) {\n"
+    "        sst_mmio_handle_fault(cpu, guest_addr, pc, is_write, host_signal_mask(uc));\n"
+    "    }\n")
+open(p, "w").write(s)
+
 # linux-user/signal.c: include + the host_sigsegv_handler hook.
 patch("linux-user/signal.c", [
     ("sst_mmio.h", '#include "host-signal.h"\n', '#include "sst_mmio.h"\n', True),
@@ -76,7 +88,10 @@ patch("linux-user/signal.c", [
      "    bool maperr;\n",
      "\n    /* Quetz P6: route reserved-aperture faults to the sync mailbox.\n"
      "     * On a match this does not return (cpu_loop_exit). */\n"
-     "    sst_mmio_handle_fault(cpu, guest_addr, pc);\n", True),
+     "    if (is_valid && access_type != MMU_INST_FETCH &&\n"
+     "        in_code_gen_buffer((void *)(pc - tcg_splitwx_diff))) {\n"
+     "        sst_mmio_handle_fault(cpu, guest_addr, pc, is_write, host_signal_mask(uc));\n"
+     "    }\n", True),
 ])
 print("linux-user overlay applied")
 PY
@@ -84,4 +99,4 @@ fi
 
 echo "Quetz QEMU overlay applied under $QEMU_SRC"
 
-printf '%s\n' quetz-generic-v5 > "$QEMU_SRC/.quetz-generic-overlay"
+printf '%s\n' quetz-generic-v6 > "$QEMU_SRC/.quetz-generic-overlay"

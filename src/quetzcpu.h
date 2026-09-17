@@ -466,6 +466,8 @@ private:
     QemuFrontend* frontend_;
     bool          stop_ticking_;
     uint32_t     halted_count_;
+    uint32_t     child_poll_ticks_ = 0;
+    bool         child_running_ = true;
 
     std::vector<MemRegionHandler*>             region_handlers_;
     MemRegionTable                             region_table_;

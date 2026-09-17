@@ -33,7 +33,7 @@ typedef enum QuetzInsnClass {
 enum {
     QUETZ_COMPUTE_RUN_MAX = 4096, QUETZ_CMD_DATA_BYTES = 64,
     QUETZ_MAX_MMIO_VCORES = 256, QUETZ_MAX_IRQ_LINES = 64,
-    QUETZ_SHM_MAGIC = 0x515A4D05u,
+    QUETZ_SHM_MAGIC = 0x515A4D06u,
     QUETZ_MAX_NATIVE_REGIONS = 2, QUETZ_NATIVE_REGION_BYTES = 65536
 };
 
@@ -53,7 +53,9 @@ typedef struct QuetzMmioResponseSlot {
 
 typedef struct QuetzMmioSyncRequest {
     volatile uint32_t pending;
-    uint32_t cmd, size, _pad;
+    uint32_t cmd, size;
+    /* Producer ownership spans request publication through response consumption. */
+    uint32_t busy;
     uint64_t addr, write_val;
 } QuetzMmioSyncRequest;
 

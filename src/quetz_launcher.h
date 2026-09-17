@@ -28,7 +28,8 @@ public:
 
     pid_t spawn(const QuetzConfig& cfg, const std::string& shmem_region_name,
                 bool detailed_tracking);
-    void  terminate();
+    bool  checkChild();
+    void  terminate(bool expect_guest_exit = false);
     void  forceKill();
 
     pid_t pid() const { return pid_; }

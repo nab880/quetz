@@ -13,6 +13,7 @@
 #include "quetz_gpu_device.h"
 
 #include "quetz_irq_event.h"
+#include "quetz_memory_span.h"
 
 #include <sst/core/link.h>
 
@@ -97,7 +98,7 @@ QuetzGpuDevice::QuetzGpuDevice(ComponentId_t id, Params& params)
     std::string clockfreq = params.find<std::string>("clock", "1GHz");
     UnitAlgebra clock_ua(clockfreq);
     if (!(clock_ua.hasUnits("Hz") || clock_ua.hasUnits("s")) ||
-        clock_ua.getRoundedValue() <= 0) {
+        clock_ua.getValue() <= 0) {
         out.fatal(CALL_INFO, -1,
             "%s: invalid clock '%s' (must be Hz or s, > 0).\n",
             getName().c_str(), clockfreq.c_str());
@@ -609,6 +610,8 @@ void QuetzGpuDevice::opReject(const char* why) {
 }
 
 bool QuetzGpuDevice::dmaRangeOk(uint64_t addr, uint64_t len) const {
+    if (!memorySpanValid(addr, len))
+        return false;
     if (dma_range_end_ == 0)
         return true;    // unconfigured: no restriction
     if (len == 0)
@@ -656,8 +659,8 @@ void QuetzGpuDevice::opIssueReadWindow() {
     while (op_next_dma_off_ < op_in_bytes_ &&
            op_dma_outstanding_ < kMaxOpDmaOutstanding) {
         uint64_t off = op_next_dma_off_;
-        uint64_t n = op_in_bytes_ - off;
-        if (n > kOpDmaChunk) n = kOpDmaChunk;
+        const uint64_t n = memoryChunkSize(op_args_.src_addr + off,
+            op_in_bytes_ - off, mem_iface_->getLineSize(), kOpDmaChunk);
         auto* rd = new StandardMem::Read(op_args_.src_addr + off, (size_t)n);
         op_req_off_[rd->getID()] = off;
         op_next_dma_off_ += n;
@@ -739,8 +742,8 @@ void QuetzGpuDevice::opIssueWriteWindow() {
     while (op_next_dma_off_ < op_out_.size() &&
            op_dma_outstanding_ < kMaxOpDmaOutstanding) {
         uint64_t off = op_next_dma_off_;
-        uint64_t n = op_out_.size() - off;
-        if (n > kOpDmaChunk) n = kOpDmaChunk;
+        const uint64_t n = memoryChunkSize(op_args_.dst_addr + off,
+            op_out_.size() - off, mem_iface_->getLineSize(), kOpDmaChunk);
         std::vector<uint8_t> chunk(op_out_.begin() + off,
                                    op_out_.begin() + off + n);
         auto* wr = new StandardMem::Write(op_args_.dst_addr + off, (size_t)n, chunk);

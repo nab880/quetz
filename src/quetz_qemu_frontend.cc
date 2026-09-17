@@ -79,6 +79,10 @@ void QemuFrontend::terminate() {
     launcher_.terminate();
 }
 
+void QemuFrontend::terminate(bool expect_guest_exit) {
+    launcher_.terminate(expect_guest_exit);
+}
+
 void QemuFrontend::forceKill() {
     launcher_.forceKill();
 }

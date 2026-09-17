@@ -33,7 +33,9 @@ public:
 
     void spawn(const QuetzConfig& cfg, bool detailed_tracking) override;
     void waitForChildAttach() override;
+    bool checkChild() { return launcher_.checkChild(); }
     void terminate() override;
+    void terminate(bool expect_guest_exit);
     void forceKill() override;
 
     const std::string& shmemRegionName() const override;
