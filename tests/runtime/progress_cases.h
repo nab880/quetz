@@ -142,6 +142,6 @@ int main() {
     pipelineCase(1,1,2,false,8);pipelineCase(1,1,64,false,1024);
     pipelineCase(1,1,2,true,16);pipelineCase(1,1,64,true,1024);
     pipelineCase(1,1,64,false,8,1);
-    asyncCase();gpuCase();childCase();
+    asyncCase();gpuCase();childCase();childExitRefillCase();
     puts("PASS production pipeline, emitter, async queue, GPU DMA and child-exit regressions");
 }

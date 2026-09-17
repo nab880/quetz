@@ -321,10 +321,14 @@ bool QuetzCPU::tick(SST::Cycle_t ) {
     // Poll periodically instead of making a process syscall on every cycle.
     // Keep draining buffered trace after a successful exit, but reject a child
     // that vanished without sending the expected per-core EXIT records.
+    const bool child_was_running = child_running_;
     if ((++child_poll_ticks_ & 1023u) == 0 || halted_count_ == cfg_.vcpu_count)
         child_running_ = frontend_->checkChild();
     if (halted_count_ < cfg_.vcpu_count) {
-        if (!child_running_) {
+        // QEMU can publish EXIT and exit after this tick's nonblocking
+        // refill. Once waitpid observes its death, allow a fresh refill on
+        // the next tick before trusting the cached pipeline drain state.
+        if (!child_running_ && !child_was_running) {
             bool drained = true;
             for (uint32_t i = 0; i < cfg_.vcpu_count; ++i)
                 drained = drained && cores_[i]->isDrained();

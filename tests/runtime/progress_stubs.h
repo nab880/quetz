@@ -26,6 +26,7 @@
 namespace SST {
 using ComponentId_t = uint64_t;
 using TimeConverter = uint64_t;
+using Cycle_t = uint64_t;
 struct Params {
     std::unordered_map<std::string, std::string> values;
     template<class T> T find(const char* name, T fallback) const {
@@ -74,7 +75,19 @@ struct StandardMem {
 };
 }
 namespace Quetz {
-struct QuetzCoreBackend {};
+struct QuetzCoreBackend {
+    std::queue<QuetzCommand> tunnel;
+    unsigned reads = 0;
+    bool readCommandNB(uint32_t, QuetzCommand* command) {
+        ++reads;
+        if (tunnel.empty()) return false;
+        *command = tunnel.front();
+        tunnel.pop();
+        return true;
+    }
+    void updateSimTime(uint64_t) {}
+    void incrementCycles() {}
+};
 struct MemRegionTable {};
 struct MemRegionHandler { enum class Action { FORWARD, END_SIM, FORWARD_MMIO }; };
 }

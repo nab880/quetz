@@ -44,7 +44,7 @@ class ProductionProgressTests(unittest.TestCase):
         text += ''.join(f'{name} = &counters[{i}];\n' for i, name in enumerate(fields))
         text += '}};\n'
         for name in ('quetz_mem_issue.h', 'quetz_mem_issue.cc', 'quetz_pipeline_api.h',
-                     'quetz_pipeline.h', 'quetz_pipeline_transform.cc',
+                     'quetz_pipeline.h', 'quetz_pipeline_input.cc', 'quetz_pipeline_transform.cc',
                      'quetz_pipeline_output.cc', 'quetz_pipeline.cc',
                      'quetz_balar_flush_range.h', 'quetz_accelerator_port.h',
                      'quetz_balar_accelerator_port.h', 'quetz_balar_accelerator_port.cc'):
@@ -75,6 +75,8 @@ struct QemuLauncher {
         text += method('quetz_launcher.cc', 'QemuLauncher::checkChild')
         text += method('quetz_launcher.cc', 'static bool reapBounded')
         text += method('quetz_launcher.cc', 'QemuLauncher::terminate')
+        text += (HERE / 'cpu_tick_cases.h').read_text()
+        text += method('quetzcpu.cc', 'bool QuetzCPU::tick(')
         text += (HERE / 'progress_cases.h').read_text()
         with tempfile.TemporaryDirectory(prefix='quetz-progress-') as tmp:
             src, binary = Path(tmp) / 'progress.cc', Path(tmp) / 'progress'
